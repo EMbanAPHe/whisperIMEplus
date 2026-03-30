@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">Whisper+</string>
-    <string name="voice_input">Whisper+ Voice Input</string>
+    <string name="app_name" translatable="false">Whisper+ IME</string>
+    <string name="voice_input">Whisper+ IME Voice Input</string>
     <string name="need_record_audio_permission">"RECORD_AUDIO permission is not granted"</string>
     <string name="download_model">Download Model</string>
     <string name="status">Status:</string>
@@ -36,7 +36,7 @@
     <string name="settings_voice_input">Voice Input</string>
     <string name="settings_ime">Input Method (IME) &amp; Test</string>
     <string name="settings_general">General</string>
-    <string name="whisper_test">Whisper+ Test</string>
+    <string name="whisper_test">Whisper+ IME Test</string>
     <string name="settings_minimum_silence">Minimum silence in automatic mode (ms)</string>
     <string name="lang1">Language 1</string>
     <string name="lang2">Language 2</string>
