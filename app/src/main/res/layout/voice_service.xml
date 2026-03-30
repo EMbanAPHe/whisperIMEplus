@@ -1,126 +1,260 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Transcribro-style IME layout for Whisper+
+    ==========================================
+    Left column (60% width):
+      • Top toolbar (38% height): [Settings][Keyboard] stacked | [Cancel]
+      • Mic button  (62% height): large tap-to-toggle button
+
+    Right column (40% width), 4 equal rows:
+      • [Clear unselected text]
+      • [Undo]  [Redo]
+      • [Translate EN] [Backspace]
+      • [Send]  [Return/Enter]
+
+    Total keyboard height ≈ 252dp (4dp progress bar + 8dp padding + 240dp content).
+    All touch targets ≥ 42dp; primary mic button is ~149dp.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@color/darkGrey"
-    android:fitsSystemWindows="true"
-    android:padding="5dp">
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="4dp"
+    android:paddingBottom="8dp">
 
+    <!-- Progress bar: shows transcription activity -->
     <ProgressBar
         android:id="@+id/processing_bar"
+        style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="4dp"
         android:indeterminate="false"
         android:progressTint="@color/colorAccent"
         android:progressBackgroundTint="@color/lightGrey"
-        android:indeterminateTint="@color/colorAccent"
-        style="?android:attr/progressBarStyleHorizontal"/>
+        android:indeterminateTint="@color/colorAccent" />
 
-    <RelativeLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginHorizontal="5dp"
-        android:layout_marginBottom="5dp">
-
-        <ImageButton
-            android:id="@+id/btnKeyboard"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_alignParentStart="true"
-            android:background="@color/darkGrey"
-            android:src="@drawable/ic_keyboard_36dp"
-            android:contentDescription="@string/exit_button"/>
-
-        <ImageButton
-            android:id="@+id/btnLang1"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:layout_toEndOf="@id/btnKeyboard"
-            android:background="@color/darkGrey"
-            android:src="@drawable/ic_counter_1_off_36dp"
-            android:contentDescription="@string/lang1"/>
-
-        <ImageButton
-            android:id="@+id/btnLang2"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:layout_toEndOf="@id/btnLang1"
-            android:background="@color/darkGrey"
-            android:src="@drawable/ic_counter_2_off_36dp"
-            android:contentDescription="@string/lang2"/>
-
-        <ImageButton
-            android:id="@+id/btnModeAuto"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_centerHorizontal="true"
-            android:background="@color/darkGrey"
-            android:src="@drawable/ic_auto_off_36dp"
-            android:contentDescription="@string/auto_button"/>
-
-        <ImageButton
-            android:id="@+id/btnTranslate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_alignParentEnd="true"
-            android:background="@color/darkGrey"
-            android:src="@drawable/ic_english_off_36dp"
-            android:contentDescription="@string/translate"/>
-
-    </RelativeLayout>
+    <!-- Error / status message (hidden by default) -->
     <TextView
         android:id="@+id/tv_status"
-        android:visibility="gone"
-        android:layout_alignParentEnd="true"
-        android:layout_toEndOf="@id/btnKeyboard"
-        android:gravity="center_horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
         android:paddingHorizontal="10dp"
-        android:textSize="20dp"
-        android:textColor="@android:color/holo_red_dark" />
-    <RelativeLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:id="@+id/layout_buttons"
-        android:layout_marginHorizontal="5dp"
-        android:layout_marginBottom="10dp">
+        android:textSize="13sp"
+        android:textColor="@android:color/holo_red_dark"
+        android:visibility="gone" />
 
-        <ImageButton
-            android:id="@+id/btnRecord"
-            android:layout_width="96dp"
-            android:layout_height="wrap_content"
-            android:layout_centerHorizontal="true"
-            android:layout_marginVertical="3dp"
-            android:layout_marginHorizontal="5dp"
-            android:background="@drawable/rounded_button_background"
-            android:src="@drawable/ic_mic_48dp"
-            android:contentDescription="@string/record_button"/>
-        <ImageButton
-            android:id="@+id/btnDel"
-            android:layout_width="48dp"
-            android:layout_height="wrap_content"
-            android:layout_marginVertical="3dp"
-            android:layout_marginHorizontal="3dp"
-            android:layout_toStartOf="@id/btnEnter"
-            android:background="@drawable/rounded_button_background"
-            android:src="@drawable/ic_keyboard_del_48dp"
-            android:contentDescription="@string/delete_button"/>
+    <!-- ═══════════════════════════════════════════════════════
+         Main content: left (mic) + right (utility buttons)
+         Fixed 240dp height keeps the keyboard predictable.
+         ═══════════════════════════════════════════════════════ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="240dp"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
 
-        <ImageButton
-            android:id="@+id/btnEnter"
-            android:layout_width="48dp"
-            android:layout_height="wrap_content"
-            android:layout_marginVertical="3dp"
-            android:layout_marginHorizontal="3dp"
-            android:layout_alignParentEnd="true"
-            android:background="@drawable/rounded_button_background"
-            android:src="@drawable/ic_keyboard_return_48dp"
-            android:contentDescription="@string/return_button"/>
+        <!-- ─── LEFT COLUMN (60%) ─── -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.6"
+            android:orientation="vertical">
 
-    </RelativeLayout>
+            <!-- Top toolbar (38% of 240dp ≈ 91dp) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="0.38"
+                android:orientation="horizontal">
+
+                <!-- Settings + Keyboard stacked (35% of toolbar width) -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="0.35"
+                    android:orientation="vertical">
+
+                    <ImageButton
+                        android:id="@+id/btnSettings"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:layout_marginBottom="4dp"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:src="@drawable/ic_settings"
+                        android:contentDescription="@string/settings"
+                        android:scaleType="centerInside"
+                        android:padding="4dp" />
+
+                    <ImageButton
+                        android:id="@+id/btnKeyboard"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:src="@drawable/ic_keyboard_36dp"
+                        android:contentDescription="@string/exit_button"
+                        android:scaleType="centerInside"
+                        android:padding="4dp" />
+
+                </LinearLayout>
+
+                <Space
+                    android:layout_width="6dp"
+                    android:layout_height="match_parent" />
+
+                <!-- Cancel Recognition (65% of toolbar width, full height) -->
+                <ImageButton
+                    android:id="@+id/btnCancel"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="0.65"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_cancel_36dp"
+                    android:contentDescription="@string/cancel_recognition"
+                    android:scaleType="centerInside"
+                    android:padding="8dp"
+                    android:enabled="false"
+                    android:alpha="0.4" />
+
+            </LinearLayout>
+
+            <!-- Mic button (62% of 240dp ≈ 149dp tall — the primary action) -->
+            <ImageButton
+                android:id="@+id/btnRecord"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="0.62"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/rounded_button_background"
+                android:src="@drawable/ic_mic_48dp"
+                android:contentDescription="@string/record_button"
+                android:scaleType="centerInside" />
+
+        </LinearLayout>
+
+        <Space
+            android:layout_width="8dp"
+            android:layout_height="match_parent" />
+
+        <!-- ─── RIGHT COLUMN (40%) — 4 equal rows of utility buttons ─── -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.4"
+            android:orientation="vertical">
+
+            <!-- Row 1: Clear unselected text -->
+            <ImageButton
+                android:id="@+id/btnClear"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginBottom="5dp"
+                android:background="@drawable/rounded_button_tonal"
+                android:src="@drawable/ic_clear_all_36dp"
+                android:contentDescription="@string/clear_unselected"
+                android:scaleType="centerInside"
+                android:padding="6dp" />
+
+            <!-- Row 2: Undo | Redo -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginBottom="5dp"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/btnUndo"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_undo_36dp"
+                    android:contentDescription="@string/undo"
+                    android:scaleType="centerInside" />
+
+                <ImageButton
+                    android:id="@+id/btnRedo"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_redo_36dp"
+                    android:contentDescription="@string/redo"
+                    android:scaleType="centerInside" />
+
+            </LinearLayout>
+
+            <!-- Row 3: Translate EN toggle | Backspace -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginBottom="5dp"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/btnTranslate"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_english_off_36dp"
+                    android:contentDescription="@string/translate_button"
+                    android:scaleType="centerInside" />
+
+                <ImageButton
+                    android:id="@+id/btnDel"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_keyboard_del_48dp"
+                    android:contentDescription="@string/delete_button"
+                    android:scaleType="centerInside" />
+
+            </LinearLayout>
+
+            <!-- Row 4: Send (IME action) | Return/Enter -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/btnSend"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_send_36dp"
+                    android:contentDescription="@string/send"
+                    android:scaleType="centerInside" />
+
+                <ImageButton
+                    android:id="@+id/btnEnter"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_keyboard_return_48dp"
+                    android:contentDescription="@string/return_button"
+                    android:scaleType="centerInside" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
 
 </LinearLayout>

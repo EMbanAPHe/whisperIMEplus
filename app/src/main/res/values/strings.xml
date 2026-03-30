@@ -40,5 +40,11 @@
     <string name="settings_minimum_silence">Minimum silence in automatic mode (ms)</string>
     <string name="lang1">Language 1</string>
     <string name="lang2">Language 2</string>
-
+    <!-- New strings for Transcribro-style IME UI -->
+    <string name="cancel_recognition">Cancel Recognition</string>
+    <string name="clear_unselected">Clear unselected text</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="send">Send</string>
+    <string name="translate_button">Toggle translation to English</string>
 </resources>
