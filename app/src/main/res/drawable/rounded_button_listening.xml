@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Mic button — "listening" state (VAD active, waiting for speech).
+    Colour sits visually halfway between:
+      • tonal / idle  (#3A3A3C — dark grey)
+      • active        (#6750A4 — full accent purple)
+    We use the accent colour at ~60% opacity (#996750A4 = colorAccentDark in
+    night mode) rendered against the dark keyboard background (#1C1C1E),
+    giving a clearly-purple-but-not-fully-lit appearance.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/colorAccentDark" />
+    <corners android:radius="10dp" />
+</shape>

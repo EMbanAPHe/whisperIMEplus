@@ -41,7 +41,7 @@
     <string name="lang1">Language 1</string>
     <string name="lang2">Language 2</string>
     <!-- IME keyboard strings -->
-    <string name="cancel_recognition">Cancel</string>
+    <string name="cancel_recognition">Cancel\nRecognition</string>
     <string name="clear_unselected">Clear\nUnselected</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>

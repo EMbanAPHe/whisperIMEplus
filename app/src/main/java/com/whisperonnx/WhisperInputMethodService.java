@@ -38,78 +38,95 @@ import com.whisperonnx.utils.HapticFeedback;
 /**
  * Whisper+ IME keyboard panel.
  *
- * Streaming / continuous mode
- * ───────────────────────────
- * When Auto-Stop is enabled (default ON):
- *   1. Keyboard opens → recording starts automatically (Auto-Start).
- *   2. VAD detects silence → Recorder stops → transcription begins.
- *   3. Result committed to the text field.
- *   4. Recording immediately restarts for the next utterance.
- *   Repeat until the user taps Cancel or closes the keyboard.
+ * Mic button — three visual states
+ * ──────────────────────────────────
+ *   IDLE       rounded_button_tonal      dark grey    not in listening mode
+ *   LISTENING  rounded_button_listening  mid-purple   VAD running, waiting for speech
+ *   RECORDING  rounded_button_background full-purple  speech detected, capturing audio
  *
- * When Auto-Stop is disabled:
- *   Recording runs until the user taps the mic button again.
- *   No auto-restart.
+ * State machine
+ * ─────────────
+ *   isListening  tracks whether we have called mRecorder.start() and are
+ *                waiting for (or actively capturing) audio.  Set true in
+ *                startRecordingSession(), cleared by Cancel, keyboard close,
+ *                and MSG_RECORDING_DONE/ERROR callbacks.
  *
- * Mic button colours
- * ──────────────────
- * • Idle (not recording) → rounded_button_tonal  (subdued grey)
- * • Active (recording)   → rounded_button_background (bright accent purple)
+ *   isRecording  true only while VAD has confirmed speech is present
+ *                (MSG_RECORDING callback received).
  *
- * Threading
- * ─────────
- * • RecorderListener → Recorder worker thread  → UI via handler.post()
- * • WhisperListener  → Whisper inference thread → UI via handler.post()
- *   InputConnection.commitText() is safe from any thread per Android docs.
- * • Recorder.stop() blocks for ~one audio frame (~30 ms) normally.
- *   Called via new Thread() in Cancel to avoid any main-thread stall.
+ *   continuousMode  true while auto-restart is desired after each result.
+ *
+ * Mic tap behaviour
+ * ─────────────────
+ *   If isListening → stop (exit listening mode, set continuousMode=false)
+ *   If not         → enter listening mode
+ *
+ * Cancel button
+ * ─────────────
+ *   Enabled as soon as isListening becomes true.
+ *   Exits listening mode and stops any in-progress transcription.
  */
 public class WhisperInputMethodService extends InputMethodService {
 
     private static final String TAG = "WhisperIME";
 
     // ── Widgets ───────────────────────────────────────────────────────────────
-    // btnCancel, btnClear, btnSpace use TextView in XML → declared as View here
-    // so we can call setEnabled / setAlpha without casting to ImageButton.
-    private ImageButton btnRecord;
-    private ImageButton btnKeyboard;
-    private ImageButton btnSettings;
-    private ImageButton btnSend;
-    private ImageButton btnUndo;
-    private ImageButton btnRedo;
-    private ImageButton btnDel;
-    private ImageButton btnEnter;
-    private View        btnCancel;   // TextView in layout
-    private View        btnClear;    // TextView in layout
-    private View        btnSpace;    // TextView in layout
-    private TextView    tvStatus;
-    private ProgressBar processingBar;
+    private ImageButton  btnRecord;
+    private ImageButton  btnKeyboard;
+    private ImageButton  btnSettings;
+    private ImageButton  btnSend;
+    private ImageButton  btnUndo;
+    private ImageButton  btnRedo;
+    private ImageButton  btnDel;
+    private ImageButton  btnEnter;
+    private View         btnCancel;   // TextView in layout
+    private View         btnClear;    // TextView in layout
+    private View         btnSpace;    // TextView in layout
+    private TextView     tvStatus;
+    private ProgressBar  processingBar;
     private LinearLayout layoutKeyboardContent;
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    /** Kept static so translate mode survives IME view re-inflations. */
+    // ── Static state (survives view re-inflation) ──────────────────────────────
     private static boolean translate = false;
 
-    private volatile boolean isRecording     = false;
-    private volatile boolean cancelRequested = false;
+    // ── Session state (volatile — read from recorder/whisper threads) ──────────
     /**
-     * True while we are in continuous (VAD auto-stop + auto-restart) mode.
-     * Cleared by Cancel, keyboard close, or the user tapping mic to stop.
+     * True from the moment startRecordingSession() is called until the session
+     * ends (Cancel, keyboard close, MSG_RECORDING_DONE/ERROR without continuous
+     * restart).  Controls the LISTENING visual state and Cancel availability.
+     */
+    private volatile boolean isListening    = false;
+
+    /**
+     * True only while the VAD has detected actual speech in the audio stream
+     * (MSG_RECORDING received, MSG_RECORDING_DONE not yet received).
+     * Controls the RECORDING (bright) visual state.
+     */
+    private volatile boolean isRecording    = false;
+
+    /**
+     * Set before calling Recorder.stop() via Cancel or mic tap-to-stop, so
+     * the RecorderListener knows NOT to start transcription or restart.
+     */
+    private volatile boolean cancelRequested = false;
+
+    /**
+     * True while we want auto-restart after each transcription result.
      */
     private volatile boolean continuousMode  = false;
 
     // ── Preferences ───────────────────────────────────────────────────────────
-    private boolean prefAutoStart;   // start recording when keyboard opens
-    private boolean prefAutoStop;    // VAD auto-stop → commit → restart
-    private boolean prefAutoSwitch;  // switch to previous IME after result
-    private boolean prefAutoSend;    // perform IME action after each result
+    private boolean prefAutoStart;
+    private boolean prefAutoStop;
+    private boolean prefAutoSwitch;
+    private boolean prefAutoSend;
 
     // ── Core ──────────────────────────────────────────────────────────────────
     private Recorder          mRecorder = null;
     private Whisper           mWhisper  = null;
     private SharedPreferences sp        = null;
-    private final Handler handler       = new Handler(Looper.getMainLooper());
-    private Context mContext;
+    private final Handler     handler   = new Handler(Looper.getMainLooper());
+    private Context           mContext;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Service lifecycle
@@ -123,18 +140,16 @@ public class WhisperInputMethodService extends InputMethodService {
 
     @Override
     public void onDestroy() {
-        continuousMode = false;
+        exitListeningMode(false);
         deinitModel();
-        if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
         super.onDestroy();
     }
 
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         if (attribute.inputType == EditorInfo.TYPE_NULL) {
-            continuousMode = false;
+            exitListeningMode(false);
             deinitModel();
-            if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
         }
     }
 
@@ -142,19 +157,14 @@ public class WhisperInputMethodService extends InputMethodService {
     public void onStartInputView(EditorInfo attribute, boolean restarting) {
         if (mWhisper == null) initModel();
         loadPrefs();
-        if (prefAutoStart && !isRecording) {
+        if (prefAutoStart && !isListening) {
             startRecordingSession(prefAutoStop);
         }
     }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
-        // Stop everything when the keyboard is hidden
-        cancelRequested = true;
-        continuousMode  = false;
-        if (mRecorder != null && mRecorder.isInProgress()) {
-            new Thread(() -> mRecorder.stop()).start();
-        }
+        exitListeningMode(false);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -169,7 +179,6 @@ public class WhisperInputMethodService extends InputMethodService {
 
         View view = getLayoutInflater().inflate(R.layout.voice_service, null);
 
-        // Bind widgets — text-based buttons declared as View
         btnRecord             = view.findViewById(R.id.btnRecord);
         btnKeyboard           = view.findViewById(R.id.btnKeyboard);
         btnSettings           = view.findViewById(R.id.btnSettings);
@@ -192,44 +201,45 @@ public class WhisperInputMethodService extends InputMethodService {
         mRecorder = new Recorder(this);
         mRecorder.setListener(message -> {
             // Called on Recorder worker thread — all UI via handler.post()
+
             if (message.equals(Recorder.MSG_RECORDING)) {
+                // VAD confirmed speech — upgrade to RECORDING (bright) colour
                 isRecording = true;
-                handler.post(() -> {
-                    // Recording active → bright accent colour on mic button
-                    btnRecord.setBackgroundResource(R.drawable.rounded_button_background);
-                    btnCancel.setEnabled(true);
-                    btnCancel.setAlpha(1.0f);
-                    processingBar.setIndeterminate(false);
-                    processingBar.setProgress(100);
-                });
+                handler.post(() ->
+                        btnRecord.setBackgroundResource(R.drawable.rounded_button_background));
 
             } else if (message.equals(Recorder.MSG_RECORDING_DONE)) {
+                // Speech segment finished — downgrade back to LISTENING colour
+                // while transcription runs (or to IDLE if cancel was requested)
                 isRecording = false;
                 HapticFeedback.vibrate(mContext);
-                handler.post(() ->
-                        // Recording stopped → back to subdued tonal colour
-                        btnRecord.setBackgroundResource(R.drawable.rounded_button_tonal));
+
                 if (!cancelRequested) {
+                    // Keep LISTENING colour during transcription
+                    handler.post(() ->
+                            btnRecord.setBackgroundResource(R.drawable.rounded_button_listening));
                     startTranscription();
                 } else {
+                    // User cancelled — go fully IDLE
+                    isListening    = false;
                     cancelRequested = false;
                     continuousMode  = false;
                     handler.post(() -> {
+                        setMicIdle();
+                        setCancelEnabled(false);
                         resetProgressUi();
-                        btnCancel.setEnabled(false);
-                        btnCancel.setAlpha(0.4f);
                     });
                 }
 
             } else if (message.equals(Recorder.MSG_RECORDING_ERROR)) {
                 isRecording     = false;
+                isListening     = false;
                 cancelRequested = false;
                 continuousMode  = false;
                 HapticFeedback.vibrate(mContext);
                 handler.post(() -> {
-                    btnRecord.setBackgroundResource(R.drawable.rounded_button_tonal);
-                    btnCancel.setEnabled(false);
-                    btnCancel.setAlpha(0.4f);
+                    setMicIdle();
+                    setCancelEnabled(false);
                     tvStatus.setText(getString(R.string.error_no_input));
                     tvStatus.setVisibility(View.VISIBLE);
                     processingBar.setProgress(0);
@@ -238,33 +248,21 @@ public class WhisperInputMethodService extends InputMethodService {
             }
         });
 
-        // ── Mic — tap to start/stop ────────────────────────────────────────────
+        // ── Mic — toggle listening mode on/off ────────────────────────────────
         btnRecord.setOnClickListener(v -> {
-            if (isRecording) {
-                // User taps to end the current recording; don't auto-restart
-                continuousMode = false;
-                if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
+            if (isListening) {
+                // Already listening — user wants to stop the whole session
+                exitListeningMode(true);   // async stop on background thread
             } else {
                 if (!checkRecordPermission()) return;
                 startRecordingSession(prefAutoStop);
             }
         });
 
-        // ── Cancel ────────────────────────────────────────────────────────────
+        // ── Cancel — exits listening mode completely ───────────────────────────
         btnCancel.setOnClickListener(v -> {
-            cancelRequested = true;
-            continuousMode  = false;
             if (mWhisper != null) stopTranscription();
-            if (mRecorder != null && mRecorder.isInProgress()) {
-                new Thread(() -> mRecorder.stop()).start();
-            }
-            isRecording = false;
-            handler.post(() -> {
-                btnRecord.setBackgroundResource(R.drawable.rounded_button_tonal);
-                btnCancel.setEnabled(false);
-                btnCancel.setAlpha(0.4f);
-                resetProgressUi();
-            });
+            exitListeningMode(true);
         });
 
         // ── Settings ──────────────────────────────────────────────────────────
@@ -276,9 +274,8 @@ public class WhisperInputMethodService extends InputMethodService {
 
         // ── Switch keyboard ────────────────────────────────────────────────────
         btnKeyboard.setOnClickListener(v -> {
-            cancelRequested = true;
-            continuousMode  = false;
             if (mWhisper != null) stopTranscription();
+            exitListeningMode(false);
             switchToPreviousInputMethod();
         });
 
@@ -333,10 +330,10 @@ public class WhisperInputMethodService extends InputMethodService {
             }
         });
 
-        // ── Space bar ─────────────────────────────────────────────────────────
+        // ── Space ─────────────────────────────────────────────────────────────
         btnSpace.setOnClickListener(v -> {
-            if (getCurrentInputConnection() == null) return;
-            getCurrentInputConnection().commitText(" ", 1);
+            if (getCurrentInputConnection() != null)
+                getCurrentInputConnection().commitText(" ", 1);
         });
 
         // ── Send (IME action) ──────────────────────────────────────────────────
@@ -366,28 +363,61 @@ public class WhisperInputMethodService extends InputMethodService {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Recording
+    // Session helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Starts a recording session.
+     * Enters listening mode.
      *
-     * @param useVad  If true: VAD detects silence and auto-stops the recorder.
-     *                After each transcription result, recording restarts
-     *                (continuous/streaming mode) until Cancel or keyboard close.
-     *                If false: user must tap mic again to stop.
+     * @param useVad  true = VAD auto-stops on silence; restart after each
+     *                transcription result (continuous/streaming).
+     *                false = user taps mic again to stop.
      */
     private void startRecordingSession(boolean useVad) {
         if (!checkRecordPermission()) return;
         cancelRequested = false;
+        isListening     = true;
         continuousMode  = useVad;
         handler.post(() -> {
+            // LISTENING state — mid-purple
+            btnRecord.setBackgroundResource(R.drawable.rounded_button_listening);
+            setCancelEnabled(true);
             tvStatus.setVisibility(View.GONE);
             processingBar.setIndeterminate(false);
             processingBar.setProgress(0);
         });
         if (useVad) mRecorder.initVad();
         mRecorder.start();
+    }
+
+    /**
+     * Exits listening mode fully — stops the recorder (optionally async),
+     * clears all session flags, and resets the mic to IDLE.
+     *
+     * @param async  If true, Recorder.stop() runs on a background thread so
+     *               the main thread is never blocked (used by Cancel & mic tap).
+     *               If false, called from lifecycle callbacks where blocking
+     *               briefly is acceptable.
+     */
+    private void exitListeningMode(boolean async) {
+        cancelRequested = true;
+        continuousMode  = false;
+        isListening     = false;
+        isRecording     = false;
+
+        if (mRecorder != null && mRecorder.isInProgress()) {
+            if (async) {
+                new Thread(() -> mRecorder.stop()).start();
+            } else {
+                mRecorder.stop();
+            }
+        }
+
+        handler.post(() -> {
+            setMicIdle();
+            setCancelEnabled(false);
+            resetProgressUi();
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -419,12 +449,10 @@ public class WhisperInputMethodService extends InputMethodService {
 
                 final String trimmed = result.trim();
                 if (!trimmed.isEmpty() && getCurrentInputConnection() != null) {
-                    // Append trailing space so consecutive utterances don't merge.
-                    // commitText() is thread-safe per Android docs.
                     getCurrentInputConnection().commitText(trimmed + " ", 1);
                 }
 
-                // Auto-send after each result if enabled
+                // Auto-send
                 if (prefAutoSend && getCurrentInputConnection() != null) {
                     EditorInfo ei = getCurrentInputEditorInfo();
                     if (ei != null && ei.actionId != 0
@@ -436,21 +464,27 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                 }
 
-                // Auto-switch back (only for non-continuous sessions)
+                // Auto-switch (only for non-continuous sessions)
                 if (prefAutoSwitch && !continuousMode) {
-                    handler.post(() -> switchToPreviousInputMethod());
+                    isListening = false;
+                    handler.post(() -> {
+                        setMicIdle();
+                        setCancelEnabled(false);
+                        switchToPreviousInputMethod();
+                    });
                     return;
                 }
 
-                // ── Continuous streaming: restart recording for next utterance ──
+                // ── Continuous streaming: restart for next utterance ────────────
                 if (continuousMode && !cancelRequested) {
-                    // Post to main thread; by then mRecorder.mInProgress is false
-                    // (the Recorder's finally block runs before Whisper finishes).
+                    // Post to main thread; Recorder's mInProgress is false by now.
                     handler.post(() -> startRecordingSession(true));
                 } else {
+                    // Session ended cleanly after a single (non-continuous) take
+                    isListening = false;
                     handler.post(() -> {
-                        btnCancel.setEnabled(false);
-                        btnCancel.setAlpha(0.4f);
+                        setMicIdle();
+                        setCancelEnabled(false);
                     });
                 }
             }
@@ -483,30 +517,45 @@ public class WhisperInputMethodService extends InputMethodService {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // UI helpers
+    // UI helpers — all must be called on the main thread
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /** Mic → IDLE (dark grey tonal). */
+    private void setMicIdle() {
+        if (btnRecord != null)
+            btnRecord.setBackgroundResource(R.drawable.rounded_button_tonal);
+    }
+
+    private void setCancelEnabled(boolean enabled) {
+        if (btnCancel != null) {
+            btnCancel.setEnabled(enabled);
+            btnCancel.setAlpha(enabled ? 1.0f : 0.4f);
+        }
+    }
+
+    private void resetProgressUi() {
+        if (processingBar != null) {
+            processingBar.setIndeterminate(false);
+            processingBar.setProgress(0);
+        }
+        if (tvStatus != null) tvStatus.setVisibility(View.GONE);
+    }
+
     /**
-     * Sizes the keyboard content area to 33 % of display height (portrait)
-     * or 45 % (landscape) — 25 % reduction from the previous 44 % / 60 %.
+     * Sizes the content area.
+     * v3 was 0.33 portrait / 0.45 landscape.
+     * −10 % → 0.297 → 0.30 portrait / 0.405 → 0.41 landscape.
      */
     private void setKeyboardHeight() {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         boolean landscape = getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
-        int targetPx = (int) (dm.heightPixels * (landscape ? 0.45f : 0.33f));
+        int targetPx = (int) (dm.heightPixels * (landscape ? 0.41f : 0.30f));
         ViewGroup.LayoutParams lp = layoutKeyboardContent.getLayoutParams();
         lp.height = targetPx;
         layoutKeyboardContent.setLayoutParams(lp);
     }
 
-    private void resetProgressUi() {
-        processingBar.setIndeterminate(false);
-        processingBar.setProgress(0);
-        tvStatus.setVisibility(View.GONE);
-    }
-
-    /** Returns true if RECORD_AUDIO is granted; shows error text otherwise. */
     private boolean checkRecordPermission() {
         boolean ok = ContextCompat.checkSelfPermission(
                 this, android.Manifest.permission.RECORD_AUDIO)
@@ -538,32 +587,26 @@ public class WhisperInputMethodService extends InputMethodService {
                 new KeyEvent(t, t, KeyEvent.ACTION_UP, keyCode, 0, 0));
     }
 
-    /**
-     * Reads preferences and writes defaults on first run so keys are present
-     * in SharedPreferences before any view-level switch widget reads them.
-     */
     private void loadPrefs() {
         if (sp == null) sp = PreferenceManager.getDefaultSharedPreferences(this);
-
-        // Write defaults if keys don't exist yet (first install / fresh data)
-        SharedPreferences.Editor editor = null;
+        SharedPreferences.Editor ed = null;
         if (!sp.contains(SettingsActivity.KEY_AUTO_START)) {
-            if (editor == null) editor = sp.edit();
-            editor.putBoolean(SettingsActivity.KEY_AUTO_START, true);
+            if (ed == null) ed = sp.edit();
+            ed.putBoolean(SettingsActivity.KEY_AUTO_START, true);
         }
         if (!sp.contains(SettingsActivity.KEY_AUTO_STOP)) {
-            if (editor == null) editor = sp.edit();
-            editor.putBoolean(SettingsActivity.KEY_AUTO_STOP, true);
+            if (ed == null) ed = sp.edit();
+            ed.putBoolean(SettingsActivity.KEY_AUTO_STOP, true);
         }
         if (!sp.contains(SettingsActivity.KEY_AUTO_SWITCH)) {
-            if (editor == null) editor = sp.edit();
-            editor.putBoolean(SettingsActivity.KEY_AUTO_SWITCH, false);
+            if (ed == null) ed = sp.edit();
+            ed.putBoolean(SettingsActivity.KEY_AUTO_SWITCH, false);
         }
         if (!sp.contains(SettingsActivity.KEY_AUTO_SEND)) {
-            if (editor == null) editor = sp.edit();
-            editor.putBoolean(SettingsActivity.KEY_AUTO_SEND, false);
+            if (ed == null) ed = sp.edit();
+            ed.putBoolean(SettingsActivity.KEY_AUTO_SEND, false);
         }
-        if (editor != null) editor.apply();
+        if (ed != null) ed.apply();
 
         prefAutoStart  = sp.getBoolean(SettingsActivity.KEY_AUTO_START,  true);
         prefAutoStop   = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,   true);
