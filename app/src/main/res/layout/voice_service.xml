@@ -1,16 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Whisper+ IME — Transcribro-style keyboard panel
-    ================================================
-    Root uses fitsSystemWindows="true" so Android automatically adds bottom
-    padding for the navigation bar (both 3-button and gesture modes).
+    Whisper+ IME keyboard panel — v3
+    =================================
+    Left column (60 %):
+      Top toolbar (35 %): [⚙ Settings | ⌨ Keyboard] stacked  +  [Cancel — text]
+      Mic (65 %): large tap-to-toggle button
 
-    The horizontal content area (layout_keyboard_content) has its height set
-    programmatically in WhisperInputMethodService.onCreateInputView() to 44%
-    of the display height, matching the system keyboard height.
+    Right column (40 %), 4 equal rows:
+      Row 1: [Clear Unselected — text] [Send ▶]   — equal width
+      Row 2: [↩ Undo]                 [↻ Redo]    — equal width
+      Row 3: [⌫ Backspace]                         — full width
+      Row 4: [Space — text]           [⏎ Return]  — equal width
 
-    Left column  (60 %): [Settings][Keyboard] stacked top | [Cancel] | big Mic
-    Right column (40 %): Clear | Undo+Redo | Translate+Backspace | Send+Return
+    Height set programmatically in onCreateInputView() to 33 % of display
+    height (portrait) / 45 % (landscape).  fitsSystemWindows on root handles
+    the navigation-bar inset automatically.
+
+    Button states:
+      Mic idle     → rounded_button_tonal  (subdued)
+      Mic active   → rounded_button_background (bright accent)
+    All secondary buttons → rounded_button_tonal
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -23,7 +32,7 @@
     android:paddingTop="4dp"
     android:paddingBottom="4dp">
 
-    <!-- Transcription-progress bar (thin, at the very top) -->
+    <!-- Thin progress bar at very top -->
     <ProgressBar
         android:id="@+id/processing_bar"
         style="?android:attr/progressBarStyleHorizontal"
@@ -46,7 +55,7 @@
         android:textColor="@android:color/holo_red_dark"
         android:visibility="gone" />
 
-    <!-- ═══════ Main content — height set programmatically ═══════ -->
+    <!-- ═════ Main content — height set programmatically ═════ -->
     <LinearLayout
         android:id="@+id/layout_keyboard_content"
         android:layout_width="match_parent"
@@ -102,30 +111,31 @@
 
                 <Space android:layout_width="6dp" android:layout_height="match_parent" />
 
-                <!-- Cancel (65 % of toolbar width, greyed out when idle) -->
-                <ImageButton
+                <!-- Cancel — text label (65 % of toolbar width) -->
+                <TextView
                     android:id="@+id/btnCancel"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="0.65"
                     android:background="@drawable/rounded_button_tonal"
-                    android:src="@drawable/ic_cancel_36dp"
-                    android:contentDescription="@string/cancel_recognition"
-                    android:scaleType="centerInside"
-                    android:padding="8dp"
+                    android:text="@string/cancel_recognition"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
                     android:enabled="false"
                     android:alpha="0.4" />
 
             </LinearLayout>
 
-            <!-- Mic button (65 % of content height) — main action -->
+            <!-- Mic button (65 % of content height) — idle=tonal, active=bright -->
             <ImageButton
                 android:id="@+id/btnRecord"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="0.65"
                 android:layout_marginTop="5dp"
-                android:background="@drawable/rounded_button_background"
+                android:background="@drawable/rounded_button_tonal"
                 android:src="@drawable/ic_mic_48dp"
                 android:contentDescription="@string/record_button"
                 android:scaleType="centerInside" />
@@ -141,20 +151,39 @@
             android:layout_weight="0.4"
             android:orientation="vertical">
 
-            <!-- Row 1: Clear all unselected text -->
-            <ImageButton
-                android:id="@+id/btnClear"
+            <!-- Row 1: [Clear Unselected] [Send] — equal width -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:layout_marginBottom="5dp"
-                android:background="@drawable/rounded_button_tonal"
-                android:src="@drawable/ic_clear_all_36dp"
-                android:contentDescription="@string/clear_unselected"
-                android:scaleType="centerInside"
-                android:padding="6dp" />
+                android:orientation="horizontal">
 
-            <!-- Row 2: Undo | Redo -->
+                <TextView
+                    android:id="@+id/btnClear"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/clear_unselected"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp" />
+
+                <ImageButton
+                    android:id="@+id/btnSend"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_send_36dp"
+                    android:contentDescription="@string/send"
+                    android:scaleType="centerInside" />
+
+            </LinearLayout>
+
+            <!-- Row 2: [Undo] [Redo] — equal width -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -185,54 +214,36 @@
 
             </LinearLayout>
 
-            <!-- Row 3: Translate toggle | Backspace -->
-            <LinearLayout
+            <!-- Row 3: [Backspace] — full width -->
+            <ImageButton
+                android:id="@+id/btnDel"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:layout_marginBottom="5dp"
-                android:orientation="horizontal">
+                android:background="@drawable/rounded_button_tonal"
+                android:src="@drawable/ic_keyboard_del_48dp"
+                android:contentDescription="@string/delete_button"
+                android:scaleType="centerInside" />
 
-                <ImageButton
-                    android:id="@+id/btnTranslate"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/rounded_button_tonal"
-                    android:src="@drawable/ic_english_off_36dp"
-                    android:contentDescription="@string/translate_button"
-                    android:scaleType="centerInside" />
-
-                <ImageButton
-                    android:id="@+id/btnDel"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:background="@drawable/rounded_button_tonal"
-                    android:src="@drawable/ic_keyboard_del_48dp"
-                    android:contentDescription="@string/delete_button"
-                    android:scaleType="centerInside" />
-
-            </LinearLayout>
-
-            <!-- Row 4: Send (IME action) | Return/newline -->
+            <!-- Row 4: [Space] [Return] — equal width -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:orientation="horizontal">
 
-                <ImageButton
-                    android:id="@+id/btnSend"
+                <TextView
+                    android:id="@+id/btnSpace"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="1"
                     android:layout_marginEnd="4dp"
                     android:background="@drawable/rounded_button_tonal"
-                    android:src="@drawable/ic_send_36dp"
-                    android:contentDescription="@string/send"
-                    android:scaleType="centerInside" />
+                    android:text="@string/space_bar"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp" />
 
                 <ImageButton
                     android:id="@+id/btnEnter"

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Existing colours — unchanged so Settings/MainActivity are unaffected -->
+    <!-- Existing — unchanged so Settings/MainActivity are unaffected -->
     <color name="black">#FF000000</color>
     <color name="lightGrey">#DDDDDD</color>
     <color name="darkGrey">#999999</color>
@@ -8,7 +8,8 @@
     <color name="colorAccentDark">#ff6750A4</color>
     <color name="windowBackground">#FAFAFA</color>
 
-    <!-- Keyboard panel colours (day / light theme) -->
-    <color name="keyboardBg">#E8E3F0</color>
-    <color name="buttonTonal">#CEC8DC</color>
+    <!-- Keyboard panel (day) -->
+    <color name="keyboardBg">#DEE0E9</color>
+    <!-- Near-neutral grey with the faintest blue tint — not purple -->
+    <color name="buttonTonal">#C2C4CC</color>
 </resources>

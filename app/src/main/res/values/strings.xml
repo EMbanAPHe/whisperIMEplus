@@ -40,23 +40,22 @@
     <string name="settings_minimum_silence">Minimum silence in auto-stop mode (ms)</string>
     <string name="lang1">Language 1</string>
     <string name="lang2">Language 2</string>
-
-    <!-- Transcribro-style IME keyboard strings -->
-    <string name="cancel_recognition">Cancel Recognition</string>
-    <string name="clear_unselected">Clear unselected text</string>
+    <!-- IME keyboard strings -->
+    <string name="cancel_recognition">Cancel</string>
+    <string name="clear_unselected">Clear\nUnselected</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="send">Send</string>
+    <string name="space_bar">Space</string>
     <string name="translate_button">Toggle translation to English</string>
-
-    <!-- Voice input keyboard settings (matching Transcribro) -->
+    <!-- Settings -->
     <string name="settings_voice_keyboard">Voice Input Keyboard</string>
     <string name="pref_auto_start_title">Auto-Start Recognition</string>
     <string name="pref_auto_start_summary">Automatically start listening when the keyboard opens</string>
     <string name="pref_auto_stop_title">Auto-Stop Recognition</string>
-    <string name="pref_auto_stop_summary">Automatically stop and transcribe when speech pauses (uses VAD). Tap mic again to stop the session.</string>
+    <string name="pref_auto_stop_summary">Automatically stop and transcribe when speech pauses, then restart (streaming mode)</string>
     <string name="pref_auto_switch_title">Auto-Switch To Previous Input Method</string>
-    <string name="pref_auto_switch_summary">Switch back to the previous keyboard after finishing a non-continuous session</string>
+    <string name="pref_auto_switch_summary">Switch back to the previous keyboard after finishing a session</string>
     <string name="pref_auto_send_title">Auto-Send Transcription</string>
     <string name="pref_auto_send_summary">Automatically send/submit after each transcription result</string>
 </resources>
