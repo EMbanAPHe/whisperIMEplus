@@ -11,7 +11,7 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.inputmethodservice.InputMethodService;
 import android.os.Handler;
-import android.os.HapticFeedbackConstants;
+import android.view.HapticFeedbackConstants;
 import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
