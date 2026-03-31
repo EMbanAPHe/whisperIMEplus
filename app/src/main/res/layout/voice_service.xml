@@ -166,7 +166,7 @@
                     android:layout_weight="1"
                     android:layout_marginEnd="4dp"
                     android:background="@drawable/rounded_button_tonal"
-                    android:text="@string/clear_unselected"
+                    android:text="@string/delete_unselected"
                     android:gravity="center"
                     android:textColor="#FFFFFF"
                     android:textSize="11sp" />

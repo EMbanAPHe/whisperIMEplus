@@ -42,12 +42,13 @@
     <string name="lang2">Language 2</string>
     <!-- IME keyboard strings -->
     <string name="cancel_recognition">Cancel\nRecognition</string>
-    <string name="clear_unselected">Clear\nUnselected</string>
+    <string name="delete_unselected">Delete\nUnselected</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="send">Send</string>
     <string name="space_bar">Space</string>
     <string name="translate_button">Toggle translation to English</string>
+    <string name="loading_model">Loading model…</string>
     <!-- Settings -->
     <string name="settings_voice_keyboard">Voice Input Keyboard</string>
     <string name="pref_auto_start_title">Auto-Start Recognition</string>
