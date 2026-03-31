@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- accent purple (#6750A4) at ~27% opacity — visible on both dark and light keyboard backgrounds -->
-    <solid android:color="#446750A4" />
+    <solid android:color="#3D3B4F" />
     <corners android:radius="10dp" />
 </shape>

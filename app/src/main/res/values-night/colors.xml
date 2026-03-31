@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Existing colours — unchanged -->
     <color name="darkGrey">#555555</color>
     <color name="colorAccent">#ff6750A4</color>
     <color name="colorAccentDark">#996750A4</color>
     <color name="windowBackground">#111111</color>
+
+    <!-- Keyboard panel colours (night / dark theme)
+         keyboardBg matches the system keyboard background (~#1A1A1E).
+         buttonTonal is slightly lighter with a subtle purple tint. -->
+    <color name="keyboardBg">#1A1A1F</color>
+    <color name="buttonTonal">#32303A</color>
 </resources>

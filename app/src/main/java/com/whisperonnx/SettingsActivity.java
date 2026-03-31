@@ -16,10 +16,10 @@ import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.Toast;
 
-
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.content.ContextCompat;
 import androidx.preference.PreferenceManager;
 
@@ -33,13 +33,18 @@ import java.util.List;
 public class SettingsActivity extends AppCompatActivity {
     private static final String TAG = "SettingsActivity";
 
+    // Preference keys — must match the keys read in WhisperInputMethodService
+    public static final String KEY_AUTO_START  = "imeAutoStart";
+    public static final String KEY_AUTO_STOP   = "imeAutoStop";
+    public static final String KEY_AUTO_SWITCH = "imeAutoSwitch";
+    public static final String KEY_AUTO_SEND   = "imeAutoSend";
+
     private SharedPreferences sp = null;
     private Spinner spinnerLanguage;
     private Spinner spinnerLanguage1IME;
     private Spinner spinnerLanguage2IME;
     private CheckBox modeSimpleChinese;
     private CheckBox modeSimpleChineseIME;
-    private String langCodeIME = "";
     private RangeSlider minSilence;
     private int langSelected;
 
@@ -50,190 +55,157 @@ public class SettingsActivity extends AppCompatActivity {
         setContentView(R.layout.activity_settings);
         ThemeUtils.setStatusBarAppearance(this);
         ActionBar actionBar = getSupportActionBar();
-        actionBar.setDisplayHomeAsUpEnabled(true);
+        if (actionBar != null) actionBar.setDisplayHomeAsUpEnabled(true);
 
         sp = PreferenceManager.getDefaultSharedPreferences(this);
-        langCodeIME = sp.getString("language", "auto");
 
-        if (!sp.contains("langSelected")){
-            SharedPreferences.Editor editor = sp.edit();
-            editor.putInt("langSelected",1);
-            editor.putString("language1",langCodeIME);
-            editor.putString("language2","auto");
-            editor.commit();
+        // ── Language slot buttons (existing behaviour, unchanged) ──────────────
+        if (!sp.contains("langSelected")) {
+            String langCodeIME = sp.getString("language", "auto");
+            sp.edit()
+                    .putInt("langSelected", 1)
+                    .putString("language1", langCodeIME)
+                    .putString("language2", "auto")
+                    .apply();
         }
 
         ImageButton btnLang1 = findViewById(R.id.btnLang1);
         ImageButton btnLang2 = findViewById(R.id.btnLang2);
-
         langSelected = sp.getInt("langSelected", 1);
-        if (langSelected == 1) {
-            btnLang1.setImageResource(R.drawable.ic_counter_1_on_36dp);
-            btnLang2.setImageResource(R.drawable.ic_counter_2_off_36dp);
-        } else {
-            btnLang1.setImageResource(R.drawable.ic_counter_1_off_36dp);
-            btnLang2.setImageResource(R.drawable.ic_counter_2_on_36dp);
-        }
+
+        updateLangButtons(btnLang1, btnLang2);
 
         btnLang1.setOnClickListener(v -> {
             String lang = sp.getString("language1", "auto");
-            SharedPreferences.Editor editor = sp.edit();
-            editor.putInt("langSelected", 1);
-            editor.putString("language", lang);
-            editor.apply();
+            sp.edit().putInt("langSelected", 1).putString("language", lang).apply();
             langSelected = 1;
-            btnLang1.setImageResource(R.drawable.ic_counter_1_on_36dp);
-            btnLang2.setImageResource(R.drawable.ic_counter_2_off_36dp);
+            updateLangButtons(btnLang1, btnLang2);
         });
-
         btnLang2.setOnClickListener(v -> {
             String lang = sp.getString("language2", "auto");
-            SharedPreferences.Editor editor = sp.edit();
-            editor.putInt("langSelected", 2);
-            editor.putString("language", lang);
-            editor.apply();
+            sp.edit().putInt("langSelected", 2).putString("language", lang).apply();
             langSelected = 2;
-            btnLang1.setImageResource(R.drawable.ic_counter_1_off_36dp);
-            btnLang2.setImageResource(R.drawable.ic_counter_2_on_36dp);
+            updateLangButtons(btnLang1, btnLang2);
         });
 
+        // ── IME language spinners (existing behaviour, unchanged) ───────────────
         spinnerLanguage1IME = findViewById(R.id.spnrLanguage1_ime);
         spinnerLanguage2IME = findViewById(R.id.spnrLanguage2_ime);
-
         List<Pair<String, String>> languagePairs = LanguagePairAdapter.getLanguagePairs(this);
 
-        LanguagePairAdapter languagePairAdapter1IME = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
-        LanguagePairAdapter languagePairAdapter2IME = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
-        languagePairAdapter1IME.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerLanguage1IME.setAdapter(languagePairAdapter1IME);
-        spinnerLanguage2IME.setAdapter(languagePairAdapter2IME);
-        String langCode1IME = sp.getString("language1", "auto");
-        String langCode2IME = sp.getString("language2", "auto");
-
-        spinnerLanguage1IME.setSelection(languagePairAdapter1IME.getIndexByCode(langCode1IME));
-        spinnerLanguage2IME.setSelection(languagePairAdapter2IME.getIndexByCode(langCode2IME));
+        LanguagePairAdapter adapter1 = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
+        LanguagePairAdapter adapter2 = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
+        adapter1.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        adapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerLanguage1IME.setAdapter(adapter1);
+        spinnerLanguage2IME.setAdapter(adapter2);
+        spinnerLanguage1IME.setSelection(adapter1.getIndexByCode(sp.getString("language1", "auto")));
+        spinnerLanguage2IME.setSelection(adapter2.getIndexByCode(sp.getString("language2", "auto")));
 
         spinnerLanguage1IME.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
-                SharedPreferences.Editor editor = sp.edit();
-                editor.putString("language1",languagePairs.get(i).first);
-                if (langSelected == 1) {
-                    langCodeIME = languagePairs.get(i).first;
-                    editor.putString("language",languagePairs.get(i).first);
-                }
-                editor.apply();
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int i, long id) {
+                sp.edit().putString("language1", languagePairs.get(i).first)
+                        .apply();
+                if (langSelected == 1)
+                    sp.edit().putString("language", languagePairs.get(i).first).apply();
             }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> adapterView) {
-
-            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-
         spinnerLanguage2IME.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
-                SharedPreferences.Editor editor = sp.edit();
-                editor.putString("language2",languagePairs.get(i).first);
-                if (langSelected == 2) {
-                    langCodeIME = languagePairs.get(i).first;
-                    editor.putString("language",languagePairs.get(i).first);
-                }
-                editor.apply();
-
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int i, long id) {
+                sp.edit().putString("language2", languagePairs.get(i).first)
+                        .apply();
+                if (langSelected == 2)
+                    sp.edit().putString("language", languagePairs.get(i).first).apply();
             }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> adapterView) {
-
-            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
 
         modeSimpleChineseIME = findViewById(R.id.mode_simple_chinese_ime);
-        modeSimpleChineseIME.setChecked(sp.getBoolean("simpleChinese",false));  //default to traditional Chinese
-        modeSimpleChineseIME.setOnCheckedChangeListener((compoundButton, isChecked) -> {
-            SharedPreferences.Editor editor = sp.edit();
-            editor.putBoolean("simpleChinese", isChecked);
-            editor.apply();
-        });
+        modeSimpleChineseIME.setChecked(sp.getBoolean("simpleChinese", false));
+        modeSimpleChineseIME.setOnCheckedChangeListener((btn, checked) ->
+                sp.edit().putBoolean("simpleChinese", checked).apply());
 
+        // ── Voice keyboard switches (NEW) ───────────────────────────────────────
+        wireSwitchCompat(R.id.switch_auto_start,  KEY_AUTO_START,  true);
+        wireSwitchCompat(R.id.switch_auto_stop,   KEY_AUTO_STOP,   true);
+        wireSwitchCompat(R.id.switch_auto_switch, KEY_AUTO_SWITCH, false);
+        wireSwitchCompat(R.id.switch_auto_send,   KEY_AUTO_SEND,   false);
+
+        // ── Recognition-service language spinner (existing, unchanged) ──────────
         spinnerLanguage = findViewById(R.id.spnrLanguage);
-
-        LanguagePairAdapter languagePairAdapter = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
-        languagePairAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerLanguage.setAdapter(languagePairAdapter);
-
-        String langCode = sp.getString("recognitionServiceLanguage", "auto");
-        spinnerLanguage.setSelection(languagePairAdapter.getIndexByCode(langCode));
+        LanguagePairAdapter adapterRec = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
+        adapterRec.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerLanguage.setAdapter(adapterRec);
+        spinnerLanguage.setSelection(adapterRec.getIndexByCode(sp.getString("recognitionServiceLanguage", "auto")));
         spinnerLanguage.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
-                SharedPreferences.Editor editor = sp.edit();
-                editor.putString("recognitionServiceLanguage", languagePairs.get(i).first);
-                editor.apply();
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int i, long id) {
+                sp.edit().putString("recognitionServiceLanguage", languagePairs.get(i).first).apply();
             }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> adapterView) {
-
-            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
 
         modeSimpleChinese = findViewById(R.id.mode_simple_chinese);
-        modeSimpleChinese.setChecked(sp.getBoolean("RecognitionServiceSimpleChinese",false));  //default to traditional Chinese
-        modeSimpleChinese.setOnCheckedChangeListener((compoundButton, isChecked) -> {
-            SharedPreferences.Editor editor = sp.edit();
-            editor.putBoolean("RecognitionServiceSimpleChinese", isChecked);
-            editor.apply();
-        });
+        modeSimpleChinese.setChecked(sp.getBoolean("RecognitionServiceSimpleChinese", false));
+        modeSimpleChinese.setOnCheckedChangeListener((btn, checked) ->
+                sp.edit().putBoolean("RecognitionServiceSimpleChinese", checked).apply());
 
+        // ── Min-silence slider (existing, unchanged) ───────────────────────────
         minSilence = findViewById(R.id.settings_min_silence);
-        float silence = sp.getInt("silenceDurationMs", 800);
-        minSilence.setValues(silence);
-        minSilence.addOnChangeListener(new RangeSlider.OnChangeListener() {
-            @Override
-            public void onValueChange(@NonNull RangeSlider slider, float value, boolean fromUser) {
-                SharedPreferences.Editor editor = sp.edit();
-                editor.putInt("silenceDurationMs", (int) value);
-                editor.apply();
-            }
-        });
+        minSilence.setValues((float) sp.getInt("silenceDurationMs", 800));
+        minSilence.addOnChangeListener((@NonNull RangeSlider slider, float value, boolean fromUser) ->
+                sp.edit().putInt("silenceDurationMs", (int) value).apply());
 
         checkPermissions();
+    }
 
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /** Bind a SwitchCompat to a SharedPreferences boolean key with a given default. */
+    private void wireSwitchCompat(int viewId, String prefKey, boolean defaultValue) {
+        SwitchCompat sw = findViewById(viewId);
+        if (sw == null) return;
+        sw.setChecked(sp.getBoolean(prefKey, defaultValue));
+        sw.setOnCheckedChangeListener((btn, checked) ->
+                sp.edit().putBoolean(prefKey, checked).apply());
+    }
+
+    private void updateLangButtons(ImageButton b1, ImageButton b2) {
+        b1.setImageResource(langSelected == 1
+                ? R.drawable.ic_counter_1_on_36dp : R.drawable.ic_counter_1_off_36dp);
+        b2.setImageResource(langSelected == 2
+                ? R.drawable.ic_counter_2_on_36dp : R.drawable.ic_counter_2_off_36dp);
     }
 
     private void checkPermissions() {
         List<String> perms = new ArrayList<>();
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
             perms.add(Manifest.permission.RECORD_AUDIO);
-            Toast.makeText(this, getString(R.string.need_record_audio_permission), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.need_record_audio_permission),
+                    Toast.LENGTH_SHORT).show();
         }
-        if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) && (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)){
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
             perms.add(Manifest.permission.POST_NOTIFICATIONS);
         }
-        if (!perms.isEmpty()) {
-            requestPermissions(perms.toArray(new String[] {}), 0);
-        }
+        if (!perms.isEmpty())
+            requestPermissions(perms.toArray(new String[0]), 0);
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "Record permission is granted");
-        } else {
-            Log.d(TAG, "Record permission is not granted");
-        }
+        Log.d(TAG, "Record permission " +
+                (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                        ? "granted" : "not granted"));
     }
 
     @Override
-    public boolean onOptionsItemSelected(MenuItem item) { //handle "back click" on action bar
-        if (item.getItemId() == android.R.id.home) {
-            finish();
-            return true;
-        }
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) { finish(); return true; }
         return super.onOptionsItemSelected(item);
     }
 }

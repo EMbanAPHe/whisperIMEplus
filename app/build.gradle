@@ -7,17 +7,16 @@ android {
     namespace 'com.whisperonnx'
     compileSdk 35
 
-    lintOptions{
+    lintOptions {
         disable 'MissingTranslation'
     }
-    
+
     defaultConfig {
         applicationId "com.embanaphe.whisperimeplus"
         minSdk 28
         targetSdk 35
-        versionCode 1
-        versionName "1.0"
-
+        versionCode 2
+        versionName "1.1"
     }
 
     buildFeatures {
@@ -35,8 +34,6 @@ android {
         }
     }
 
-    // Removed externalNativeBuild block
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -47,9 +44,7 @@ android {
     }
 
     dependenciesInfo {
-        // Disable including dependency metadata when building APKs
         includeInApk = false
-        // Disable including dependency metadata when building Android App Bundles
         includeInBundle = false
     }
 }
@@ -64,9 +59,9 @@ dependencies {
     implementation 'com.github.gkonovalov.android-vad:webrtc:2.0.9'
     implementation 'com.github.houbb:opencc4j:1.8.1'
 
-    //ONNX Runtime
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.0'  //latest.release
-    implementation 'com.microsoft.onnxruntime:onnxruntime-extensions-android:0.12.4'   //latest.release
-    implementation 'com.github.woheller69:FreeDroidWarn:+'
+    // ONNX Runtime
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.0'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-extensions-android:0.12.4'
 
+    // FreeDroidWarn intentionally removed — it showed the Google Play warning popup.
 }

@@ -1,31 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Transcribro-style IME layout for Whisper+
-    ==========================================
-    Left column (60% width):
-      • Top toolbar (38% height): [Settings][Keyboard] stacked | [Cancel]
-      • Mic button  (62% height): large tap-to-toggle button
+    Whisper+ IME — Transcribro-style keyboard panel
+    ================================================
+    Root uses fitsSystemWindows="true" so Android automatically adds bottom
+    padding for the navigation bar (both 3-button and gesture modes).
 
-    Right column (40% width), 4 equal rows:
-      • [Clear unselected text]
-      • [Undo]  [Redo]
-      • [Translate EN] [Backspace]
-      • [Send]  [Return/Enter]
+    The horizontal content area (layout_keyboard_content) has its height set
+    programmatically in WhisperInputMethodService.onCreateInputView() to 44%
+    of the display height, matching the system keyboard height.
 
-    Total keyboard height ≈ 252dp (4dp progress bar + 8dp padding + 240dp content).
-    All touch targets ≥ 42dp; primary mic button is ~149dp.
+    Left column  (60 %): [Settings][Keyboard] stacked top | [Cancel] | big Mic
+    Right column (40 %): Clear | Undo+Redo | Translate+Backspace | Send+Return
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@color/darkGrey"
+    android:background="@color/keyboardBg"
+    android:fitsSystemWindows="true"
     android:paddingStart="8dp"
     android:paddingEnd="8dp"
     android:paddingTop="4dp"
-    android:paddingBottom="8dp">
+    android:paddingBottom="4dp">
 
-    <!-- Progress bar: shows transcription activity -->
+    <!-- Transcription-progress bar (thin, at the very top) -->
     <ProgressBar
         android:id="@+id/processing_bar"
         style="?android:attr/progressBarStyleHorizontal"
@@ -33,45 +31,44 @@
         android:layout_height="4dp"
         android:indeterminate="false"
         android:progressTint="@color/colorAccent"
-        android:progressBackgroundTint="@color/lightGrey"
+        android:progressBackgroundTint="@color/buttonTonal"
         android:indeterminateTint="@color/colorAccent" />
 
-    <!-- Error / status message (hidden by default) -->
+    <!-- Error / permission message — hidden by default -->
     <TextView
         android:id="@+id/tv_status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_horizontal"
         android:paddingHorizontal="10dp"
+        android:paddingVertical="2dp"
         android:textSize="13sp"
         android:textColor="@android:color/holo_red_dark"
         android:visibility="gone" />
 
-    <!-- ═══════════════════════════════════════════════════════
-         Main content: left (mic) + right (utility buttons)
-         Fixed 240dp height keeps the keyboard predictable.
-         ═══════════════════════════════════════════════════════ -->
+    <!-- ═══════ Main content — height set programmatically ═══════ -->
     <LinearLayout
+        android:id="@+id/layout_keyboard_content"
         android:layout_width="match_parent"
-        android:layout_height="240dp"
+        android:layout_height="260dp"
         android:orientation="horizontal"
-        android:layout_marginTop="6dp">
+        android:layout_marginTop="5dp">
 
-        <!-- ─── LEFT COLUMN (60%) ─── -->
+        <!-- ─── LEFT COLUMN (60 %) ─── -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="0.6"
             android:orientation="vertical">
 
-            <!-- Top toolbar (38% of 240dp ≈ 91dp) -->
+            <!-- Top toolbar (35 % of content height) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="0.38"
+                android:layout_weight="0.35"
                 android:orientation="horizontal">
 
-                <!-- Settings + Keyboard stacked (35% of toolbar width) -->
+                <!-- Settings + Keyboard stacked (35 % of toolbar width) -->
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
@@ -83,7 +80,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="0dp"
                         android:layout_weight="1"
-                        android:layout_marginBottom="4dp"
+                        android:layout_marginBottom="3dp"
                         android:background="@drawable/rounded_button_tonal"
                         android:src="@drawable/ic_settings"
                         android:contentDescription="@string/settings"
@@ -103,11 +100,9 @@
 
                 </LinearLayout>
 
-                <Space
-                    android:layout_width="6dp"
-                    android:layout_height="match_parent" />
+                <Space android:layout_width="6dp" android:layout_height="match_parent" />
 
-                <!-- Cancel Recognition (65% of toolbar width, full height) -->
+                <!-- Cancel (65 % of toolbar width, greyed out when idle) -->
                 <ImageButton
                     android:id="@+id/btnCancel"
                     android:layout_width="0dp"
@@ -123,13 +118,13 @@
 
             </LinearLayout>
 
-            <!-- Mic button (62% of 240dp ≈ 149dp tall — the primary action) -->
+            <!-- Mic button (65 % of content height) — main action -->
             <ImageButton
                 android:id="@+id/btnRecord"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="0.62"
-                android:layout_marginTop="6dp"
+                android:layout_weight="0.65"
+                android:layout_marginTop="5dp"
                 android:background="@drawable/rounded_button_background"
                 android:src="@drawable/ic_mic_48dp"
                 android:contentDescription="@string/record_button"
@@ -137,18 +132,16 @@
 
         </LinearLayout>
 
-        <Space
-            android:layout_width="8dp"
-            android:layout_height="match_parent" />
+        <Space android:layout_width="8dp" android:layout_height="match_parent" />
 
-        <!-- ─── RIGHT COLUMN (40%) — 4 equal rows of utility buttons ─── -->
+        <!-- ─── RIGHT COLUMN (40 %) — 4 equal rows ─── -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="0.4"
             android:orientation="vertical">
 
-            <!-- Row 1: Clear unselected text -->
+            <!-- Row 1: Clear all unselected text -->
             <ImageButton
                 android:id="@+id/btnClear"
                 android:layout_width="match_parent"
@@ -192,7 +185,7 @@
 
             </LinearLayout>
 
-            <!-- Row 3: Translate EN toggle | Backspace -->
+            <!-- Row 3: Translate toggle | Backspace -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -223,7 +216,7 @@
 
             </LinearLayout>
 
-            <!-- Row 4: Send (IME action) | Return/Enter -->
+            <!-- Row 4: Send (IME action) | Return/newline -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
