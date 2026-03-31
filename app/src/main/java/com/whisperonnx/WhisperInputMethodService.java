@@ -291,7 +291,9 @@ public class WhisperInputMethodService extends InputMethodService {
             }
         });
 
-        // ── Cancel ────────────────────────────────────────────────────────────
+        // ── Cancel — hard stop in all modes ───────────────────────────────────
+        // Stops the recorder, cancels any in-progress transcription, discards
+        // the current audio buffer and goes idle immediately.
         btnCancel.setOnClickListener(v -> {
             tap(v);
             if (mWhisper != null) stopTranscription();
@@ -517,6 +519,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     // the Whisper inference callback fires.
                     handler.post(() -> startRecordingSession(true));
                 } else {
+                    // Either: not streaming, or session was cancelled.
                     isListening = false;
                     handler.post(() -> {
                         setMicState(MicState.IDLE);
@@ -539,9 +542,9 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private void startRecordingSession(boolean useVad) {
         if (!checkRecordPermission()) return;
-        cancelRequested = false;
-        isListening     = true;
-        continuousMode  = useVad;
+        cancelRequested         = false;
+        isListening             = true;
+        continuousMode          = useVad;
         handler.post(() -> {
             setMicState(MicState.LISTENING);
             setCancelEnabled(true);
@@ -563,10 +566,10 @@ public class WhisperInputMethodService extends InputMethodService {
      *                        Only safe when we know recording is not in progress.
      */
     private void exitListeningMode(boolean async) {
-        cancelRequested = true;
-        continuousMode  = false;
-        isListening     = false;
-        isRecording     = false;
+        cancelRequested         = true;
+        continuousMode          = false;
+        isListening             = false;
+        isRecording             = false;
 
         if (mRecorder != null && mRecorder.isInProgress()) {
             if (async) {
@@ -686,7 +689,7 @@ public class WhisperInputMethodService extends InputMethodService {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         boolean landscape = getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
-        int targetPx = (int) (dm.heightPixels * (landscape ? 0.37f : 0.25f));
+        int targetPx = (int) (dm.heightPixels * (landscape ? 0.48f : 0.36f));
         ViewGroup.LayoutParams lp = layoutKeyboardContent.getLayoutParams();
         lp.height = targetPx;
         layoutKeyboardContent.setLayoutParams(lp);
