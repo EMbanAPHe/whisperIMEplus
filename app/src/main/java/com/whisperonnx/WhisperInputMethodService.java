@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat;
 import androidx.preference.PreferenceManager;
 
 import com.github.houbb.opencc4j.util.ZhConverterUtil;
+import com.whisperonnx.asr.RecordBuffer;
 import com.whisperonnx.asr.Recorder;
 import com.whisperonnx.asr.Whisper;
 import com.whisperonnx.asr.WhisperResult;
@@ -119,6 +120,13 @@ public class WhisperInputMethodService extends InputMethodService {
     /** Set to true after loadModel() completes on its background thread. */
     private volatile boolean modelReady      = false;
 
+    /**
+     * Pipelined audio segments waiting to be transcribed.
+     * Enqueued by the recorder listener, consumed by processNextQueued().
+     * Accessed only on the main thread (via handler.post), so no synchronisation needed.
+     */
+    private final java.util.ArrayDeque<byte[]> audioQueue = new java.util.ArrayDeque<>();
+
     // ── Preferences ───────────────────────────────────────────────────────────
     private boolean prefAutoStart;
     private boolean prefAutoStop;
@@ -176,6 +184,7 @@ public class WhisperInputMethodService extends InputMethodService {
         // Stop any active session synchronously — service is being killed
         cancelRequested = true;
         continuousMode  = false;
+        audioQueue.clear();
         if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
 
         // Release the ONNX model and recognizer
@@ -422,19 +431,57 @@ public class WhisperInputMethodService extends InputMethodService {
                         setMicState(MicState.RECORDING));
 
             } else if (message.equals(Recorder.MSG_RECORDING_DONE)) {
-                // Speech segment done — downgrade while transcription runs
+                // Speech segment captured.
+                //
+                // IMPORTANT: we are on the Recorder worker thread. recordLoop()'s
+                // finally { mInProgress.set(false) } has NOT yet run — it executes
+                // after recordAudio() returns, which is after MSG_RECORDING_DONE fires.
+                // Therefore we must NOT call mRecorder.start() here directly, or
+                // recordLoop()'s finally block would reset mInProgress=false and
+                // break the next recording. We POST everything to the handler so it
+                // runs on the main thread AFTER the finally block has completed.
                 isRecording = false;
-                HapticFeedback.vibrate(mContext); // distinct end-of-recording pulse
+                HapticFeedback.vibrate(mContext);
+
                 if (!cancelRequested) {
-                    // Show LISTENING colour while inference is running
-                    handler.post(() -> setMicState(MicState.LISTENING));
-                    startTranscription();
+                    // Snapshot the audio bytes NOW, before any new recording can
+                    // overwrite RecordBuffer. RecordBuffer.getOutputBuffer() is
+                    // synchronized so this is thread-safe.
+                    final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
+
+                    handler.post(() -> {
+                        // By the time this runs on the main thread:
+                        //   • recordLoop()'s finally block has completed
+                        //   • mRecorder.mInProgress is false
+                        //   • It is safe to call mRecorder.start()
+                        if (cancelRequested) return; // check again on main thread
+
+                        // Enqueue this segment for transcription
+                        audioQueue.offer(capturedAudio);
+
+                        // Start transcription of this segment immediately
+                        processNextQueued();
+
+                        if (continuousMode) {
+                            // Pipeline: restart recording for the NEXT segment while
+                            // Whisper processes the current one.
+                            // initVad() must be called before start() each time.
+                            mRecorder.initVad();
+                            mRecorder.start();
+                            // Mic shows LISTENING — waiting for next speech
+                            setMicState(MicState.LISTENING);
+                        } else {
+                            // Single-take: show LISTENING (dim) during processing
+                            setMicState(MicState.LISTENING);
+                        }
+                    });
                 } else {
                     // Cancelled — go fully idle
                     isListening     = false;
                     cancelRequested = false;
                     continuousMode  = false;
                     handler.post(() -> {
+                        audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
                         resetProgressUi();
@@ -505,6 +552,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 if (prefAutoSwitch && !continuousMode) {
                     isListening = false;
                     handler.post(() -> {
+                        audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
                         switchToPreviousInputMethod();
@@ -512,20 +560,32 @@ public class WhisperInputMethodService extends InputMethodService {
                     return;
                 }
 
-                // Continuous streaming — restart for next utterance
-                if (continuousMode && !cancelRequested) {
-                    // Post to main thread; Recorder.mInProgress is false by now
-                    // since processRecordBufferLoop's finally block ran before
-                    // the Whisper inference callback fires.
-                    handler.post(() -> startRecordingSession(true));
-                } else {
-                    // Either: not streaming, or session was cancelled.
-                    isListening = false;
-                    handler.post(() -> {
+                // In continuous mode, recording is already running in parallel
+                // (restarted in MSG_RECORDING_DONE handler before transcription began).
+                // All we do here is process the next queued segment if one arrived
+                // while we were busy, then update the UI.
+                handler.post(() -> {
+                    if (cancelRequested) {
+                        // Session was cancelled while we were transcribing
+                        audioQueue.clear();
+                        isListening = false;
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
-                    });
-                }
+                        return;
+                    }
+                    if (!continuousMode) {
+                        // Single-take: session ends after this result
+                        isListening = false;
+                        setMicState(MicState.IDLE);
+                        setCancelEnabled(false);
+                    } else {
+                        // Drain the queue — process the next buffered segment
+                        // if one arrived while we were busy with this one.
+                        processNextQueued();
+                        // If nothing queued, mic is already running (LISTENING or
+                        // RECORDING), so we just leave the state as-is.
+                    }
+                });
             }
         });
     }
@@ -582,28 +642,52 @@ public class WhisperInputMethodService extends InputMethodService {
         // Update UI immediately (cancelRequested will suppress any pending
         // MSG_RECORDING_DONE from triggering transcription)
         handler.post(() -> {
+            audioQueue.clear();
             setMicState(MicState.IDLE);
             setCancelEnabled(false);
             resetProgressUi();
         });
     }
 
-    private void startTranscription() {
-        handler.post(() -> {
-            if (processingBar != null) {
-                processingBar.setProgress(0);
-                processingBar.setIndeterminate(true);
-            }
-        });
-        if (mWhisper != null) {
-            mWhisper.setAction(translate ? ACTION_TRANSLATE : ACTION_TRANSCRIBE);
-            mWhisper.setLanguage(sp != null ? sp.getString("language", "auto") : "auto");
-            Log.d(TAG, "startTranscription translate=" + translate);
-            mWhisper.start();
+    /**
+     * Writes the given audio bytes to RecordBuffer and signals Whisper to
+     * begin inference.  Must be called on the main thread (it's always called
+     * from handler.post or processNextQueued, both of which run on main).
+     */
+    private void startTranscription(byte[] audioBytes) {
+        if (mWhisper == null || audioBytes == null) return;
+        if (processingBar != null) {
+            processingBar.setProgress(0);
+            processingBar.setIndeterminate(true);
+        }
+        // Write the snapshot to RecordBuffer before calling mWhisper.start().
+        // RecordBuffer.setOutputBuffer() is synchronized, safe from main thread.
+        RecordBuffer.setOutputBuffer(audioBytes);
+        mWhisper.setAction(translate ? ACTION_TRANSLATE : ACTION_TRANSCRIBE);
+        mWhisper.setLanguage(sp != null ? sp.getString("language", "auto") : "auto");
+        Log.d(TAG, "startTranscription: " + audioBytes.length + " bytes, translate=" + translate);
+        mWhisper.start();
+    }
+
+    /**
+     * Dequeues the next audio segment and transcribes it.
+     * If the queue is empty, does nothing (recording is still running and will
+     * enqueue the next segment when VAD fires).
+     * Must be called on the main thread.
+     */
+    private void processNextQueued() {
+        if (mWhisper != null && mWhisper.isInProgress()) {
+            // Whisper is still busy — onResultReceived will call us again when done
+            return;
+        }
+        byte[] next = audioQueue.poll();
+        if (next != null) {
+            startTranscription(next);
         }
     }
 
     private void stopTranscription() {
+        audioQueue.clear(); // discard any buffered segments
         handler.post(() -> resetProgressUi());
         if (mWhisper != null) mWhisper.stop();
     }
@@ -689,7 +773,7 @@ public class WhisperInputMethodService extends InputMethodService {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         boolean landscape = getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
-        int targetPx = (int) (dm.heightPixels * (landscape ? 0.48f : 0.36f));
+        int targetPx = (int) (dm.heightPixels * (landscape ? 0.38f : 0.29f));
         ViewGroup.LayoutParams lp = layoutKeyboardContent.getLayoutParams();
         lp.height = targetPx;
         layoutKeyboardContent.setLayoutParams(lp);
