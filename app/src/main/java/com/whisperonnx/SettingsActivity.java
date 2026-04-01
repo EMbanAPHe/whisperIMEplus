@@ -41,6 +41,8 @@ public class SettingsActivity extends AppCompatActivity {
     public static final String KEY_AUTO_STOP   = "imeAutoStop";
     public static final String KEY_AUTO_SWITCH = "imeAutoSwitch";
     public static final String KEY_AUTO_SEND   = "imeAutoSend";
+    /** Speech hold-time for VAD trigger (ms). Higher = less sensitive to brief noise. */
+    public static final String KEY_VAD_SPEECH_MS = "vadSpeechDurationMs";
 
     private SharedPreferences sp = null;
     private Spinner spinnerLanguage;
@@ -49,6 +51,7 @@ public class SettingsActivity extends AppCompatActivity {
     private CheckBox modeSimpleChinese;
     private CheckBox modeSimpleChineseIME;
     private RangeSlider minSilence;
+    private RangeSlider speechDuration;
     private int langSelected;
 
     @SuppressLint("ClickableViewAccessibility")
@@ -158,9 +161,14 @@ public class SettingsActivity extends AppCompatActivity {
 
         // ── Min-silence slider (existing, unchanged) ───────────────────────────
         minSilence = findViewById(R.id.settings_min_silence);
-        minSilence.setValues((float) sp.getInt("silenceDurationMs", 800));
+        minSilence.setValues((float) sp.getInt("silenceDurationMs", 1000));
         minSilence.addOnChangeListener((@NonNull RangeSlider slider, float value, boolean fromUser) ->
                 sp.edit().putInt("silenceDurationMs", (int) value).apply());
+
+        speechDuration = findViewById(R.id.settings_speech_duration);
+        speechDuration.setValues((float) sp.getInt(KEY_VAD_SPEECH_MS, 200));
+        speechDuration.addOnChangeListener((@NonNull RangeSlider slider, float value, boolean fromUser) ->
+                sp.edit().putInt(KEY_VAD_SPEECH_MS, (int) value).apply());
 
         checkPermissions();
     }

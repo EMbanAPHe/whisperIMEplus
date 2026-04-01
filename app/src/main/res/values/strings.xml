@@ -40,26 +40,40 @@
     <string name="settings_minimum_silence">Minimum silence in auto-stop mode (ms)</string>
     <string name="lang1">Language 1</string>
     <string name="lang2">Language 2</string>
+
     <!-- IME keyboard strings -->
     <string name="cancel_recognition">Cancel\nRecognition</string>
-    <string name="delete_unselected">Delete\nUnselected</string>
+    <string name="delete_unselected">Del\nUnselected</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="send">Send</string>
     <string name="space_bar">Space</string>
     <string name="translate_button">Toggle translation to English</string>
     <string name="loading_model">Loading model…</string>
+
+    <!-- New buttons v11 -->
+    <string name="discard_audio">Discard\nAudio</string>
+    <string name="select_all">Sel\nAll</string>
+    <string name="cut">Cut</string>
+    <string name="copy">Copy</string>
+    <string name="paste">Paste</string>
+    <string name="full_stop">.</string>
+    <string name="forward_delete">Del\n⌦</string>
+
     <!-- Settings sections -->
     <string name="settings_listening_mode">Listening Mode</string>
     <string name="settings_voice_keyboard">Streaming Behaviour</string>
-    <!-- Listening mode toggle (new, separate section) -->
     <string name="pref_launch_listening_title">Launch in Listening Mode</string>
     <string name="pref_launch_listening_summary">Automatically start listening each time the keyboard opens</string>
-    <!-- Streaming / voice keyboard settings -->
-    <string name="pref_auto_stop_title">Auto-Stop Recognition</string>
-    <string name="pref_auto_stop_summary">Automatically stop and transcribe when speech pauses, then restart (streaming mode)</string>
+    <string name="pref_auto_stop_title">Auto-Stop Recognition (Streaming)</string>
+    <string name="pref_auto_stop_summary">Automatically stop and transcribe when speech pauses, then restart</string>
     <string name="pref_auto_switch_title">Auto-Switch To Previous Input Method</string>
     <string name="pref_auto_switch_summary">Switch back to the previous keyboard after finishing a session</string>
     <string name="pref_auto_send_title">Auto-Send Transcription</string>
     <string name="pref_auto_send_summary">Automatically send/submit after each transcription result</string>
+
+    <!-- VAD sensitivity settings -->
+    <string name="settings_vad_section">Voice Detection</string>
+    <string name="settings_vad_sensitivity_title">Background Noise Filtering (ms)</string>
+    <string name="settings_vad_sensitivity_summary">How long sustained speech is required before recording triggers. Higher = less sensitive to brief background noise.</string>
 </resources>

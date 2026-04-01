@@ -1,25 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Whisper+ IME keyboard panel — v3
-    =================================
-    Left column (60 %):
-      Top toolbar (35 %): [⚙ Settings | ⌨ Keyboard] stacked  +  [Cancel — text]
+    Whisper+ IME keyboard panel — v11
+    ==================================
+    Left column (42 %):
+      Top toolbar (35 %): [Discard Audio | ⌨ Keyboard (long-press popup)] + [Cancel]
       Mic (65 %): large tap-to-toggle button
 
-    Right column (40 %), 4 equal rows:
-      Row 1: [Clear Unselected — text] [Send ▶]   — equal width
-      Row 2: [↩ Undo]                 [↻ Redo]    — equal width
-      Row 3: [⌫ Backspace]                         — full width
-      Row 4: [Space — text]           [⏎ Return]  — equal width
+    Right column (58 %), 5 equal rows — 3-button grid throughout:
+      Row 1: [Select All | Delete Unselected | Send ▶]
+      Row 2: [Cut | Copy | Paste]
+      Row 3: [↩ Undo | ↻ Redo]        (2 buttons, each 50 %)
+      Row 4: [. Full Stop | ⌦ Fwd Del | ⌫ Backspace]
+      Row 5: [─── Space (weight 2) ─── | ⏎ Enter]
 
-    Height set programmatically in onCreateInputView() to 33 % of display
-    height (portrait) / 45 % (landscape).  fitsSystemWindows on root handles
-    the navigation-bar inset automatically.
-
-    Button states:
-      Mic idle     → rounded_button_tonal  (subdued)
-      Mic active   → rounded_button_background (bright accent)
-    All secondary buttons → rounded_button_tonal
+    All text buttons: 12sp, normal weight, white — consistent throughout.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -43,7 +37,7 @@
         android:progressBackgroundTint="@color/buttonTonal"
         android:indeterminateTint="@color/colorAccent" />
 
-    <!-- Error / permission message — hidden by default -->
+    <!-- Error / status message — hidden by default -->
     <TextView
         android:id="@+id/tv_status"
         android:layout_width="match_parent"
@@ -63,11 +57,11 @@
         android:orientation="horizontal"
         android:layout_marginTop="5dp">
 
-        <!-- ─── LEFT COLUMN (60 %) ─── -->
+        <!-- ─── LEFT COLUMN (42 %) ─── -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.6"
+            android:layout_weight="0.42"
             android:orientation="vertical">
 
             <!-- Top toolbar (35 % of content height) -->
@@ -77,25 +71,29 @@
                 android:layout_weight="0.35"
                 android:orientation="horizontal">
 
-                <!-- Settings + Keyboard stacked (35 % of toolbar width) -->
+                <!-- Discard + Keyboard stacked (40 % of toolbar width) -->
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_weight="0.35"
+                    android:layout_weight="0.40"
                     android:orientation="vertical">
 
-                    <ImageButton
-                        android:id="@+id/btnSettings"
+                    <!-- Discard Audio — replaces Settings button -->
+                    <TextView
+                        android:id="@+id/btnDiscard"
                         android:layout_width="match_parent"
                         android:layout_height="0dp"
                         android:layout_weight="1"
                         android:layout_marginBottom="3dp"
                         android:background="@drawable/rounded_button_tonal"
-                        android:src="@drawable/ic_settings"
-                        android:contentDescription="@string/settings"
-                        android:scaleType="centerInside"
-                        android:padding="4dp" />
+                        android:text="@string/discard_audio"
+                        android:gravity="center"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp"
+                        android:enabled="false"
+                        android:alpha="0.4" />
 
+                    <!-- Keyboard switch — long press for options popup -->
                     <ImageButton
                         android:id="@+id/btnKeyboard"
                         android:layout_width="match_parent"
@@ -111,24 +109,23 @@
 
                 <Space android:layout_width="6dp" android:layout_height="match_parent" />
 
-                <!-- Cancel — text label (65 % of toolbar width) -->
+                <!-- Cancel Recognition (60 % of toolbar width) -->
                 <TextView
                     android:id="@+id/btnCancel"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_weight="0.65"
+                    android:layout_weight="0.60"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/cancel_recognition"
                     android:gravity="center"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
-                    android:textStyle="bold"
                     android:enabled="false"
                     android:alpha="0.4" />
 
             </LinearLayout>
 
-            <!-- Mic button (65 % of content height) — idle=tonal, active=bright -->
+            <!-- Mic button (65 % of content height) -->
             <ImageButton
                 android:id="@+id/btnRecord"
                 android:layout_width="match_parent"
@@ -144,20 +141,32 @@
 
         <Space android:layout_width="8dp" android:layout_height="match_parent" />
 
-        <!-- ─── RIGHT COLUMN (40 %) — 4 equal rows ─── -->
+        <!-- ─── RIGHT COLUMN (58 %) — 5 equal rows, 3-button grid ─── -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.4"
+            android:layout_weight="0.58"
             android:orientation="vertical">
 
-            <!-- Row 1: [Clear Unselected] [Send] — equal width -->
+            <!-- Row 1: Select All | Delete Unselected | Send -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                android:layout_marginBottom="5dp"
+                android:layout_marginBottom="4dp"
                 android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnSelectAll"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/select_all"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
 
                 <TextView
                     android:id="@+id/btnClear"
@@ -183,12 +192,57 @@
 
             </LinearLayout>
 
-            <!-- Row 2: [Undo] [Redo] — equal width -->
+            <!-- Row 2: Cut | Copy | Paste -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                android:layout_marginBottom="5dp"
+                android:layout_marginBottom="4dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnCut"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/cut"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/btnCopy"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/copy"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/btnPaste"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/paste"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <!-- Row 3: Undo | Redo (2 buttons, 50/50) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginBottom="4dp"
                 android:orientation="horizontal">
 
                 <ImageButton
@@ -214,19 +268,54 @@
 
             </LinearLayout>
 
-            <!-- Row 3: [Backspace] — full width -->
-            <ImageButton
-                android:id="@+id/btnDel"
+            <!-- Row 4: Full Stop | Forward Delete | Backspace -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                android:layout_marginBottom="5dp"
-                android:background="@drawable/rounded_button_tonal"
-                android:src="@drawable/ic_keyboard_del_48dp"
-                android:contentDescription="@string/delete_button"
-                android:scaleType="centerInside" />
+                android:layout_marginBottom="4dp"
+                android:orientation="horizontal">
 
-            <!-- Row 4: [Space] [Return] — equal width -->
+                <!-- Full Stop — long press shows punctuation popup -->
+                <TextView
+                    android:id="@+id/btnFullStop"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/full_stop"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp" />
+
+                <!-- Forward Delete -->
+                <TextView
+                    android:id="@+id/btnForwardDel"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:text="@string/forward_delete"
+                    android:gravity="center"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+                <!-- Backspace -->
+                <ImageButton
+                    android:id="@+id/btnDel"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/rounded_button_tonal"
+                    android:src="@drawable/ic_keyboard_del_48dp"
+                    android:contentDescription="@string/delete_button"
+                    android:scaleType="centerInside" />
+
+            </LinearLayout>
+
+            <!-- Row 5: Space (2/3) | Enter (1/3) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -237,7 +326,7 @@
                     android:id="@+id/btnSpace"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
-                    android:layout_weight="1"
+                    android:layout_weight="2"
                     android:layout_marginEnd="4dp"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/space_bar"

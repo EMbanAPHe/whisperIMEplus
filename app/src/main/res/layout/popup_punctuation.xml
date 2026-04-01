@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Full-stop long-press punctuation popup.
+  Six options: ,  !  ?  -  (  )
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/popup_background"
+    android:padding="4dp">
+
+    <TextView android:id="@+id/punct_comma"
+        android:layout_width="44dp" android:layout_height="44dp"
+        android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
+        android:text="," android:clickable="true" android:focusable="true"
+        android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
+
+    <TextView android:id="@+id/punct_exclaim"
+        android:layout_width="44dp" android:layout_height="44dp"
+        android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
+        android:text="!" android:clickable="true" android:focusable="true"
+        android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
+
+    <TextView android:id="@+id/punct_question"
+        android:layout_width="44dp" android:layout_height="44dp"
+        android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
+        android:text="?" android:clickable="true" android:focusable="true"
+        android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
+
+    <TextView android:id="@+id/punct_dash"
+        android:layout_width="44dp" android:layout_height="44dp"
+        android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
+        android:text="-" android:clickable="true" android:focusable="true"
+        android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
+
+    <TextView android:id="@+id/punct_lparen"
+        android:layout_width="44dp" android:layout_height="44dp"
+        android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
+        android:text="(" android:clickable="true" android:focusable="true"
+        android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
+
+    <TextView android:id="@+id/punct_rparen"
+        android:layout_width="44dp" android:layout_height="44dp"
+        android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
+        android:text=")" android:clickable="true" android:focusable="true"
+        android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
+
+</LinearLayout>

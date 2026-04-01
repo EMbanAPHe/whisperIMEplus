@@ -20,6 +20,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
+import android.widget.PopupWindow;
 import android.view.inputmethod.ExtractedText;
 import android.view.inputmethod.ExtractedTextRequest;
 import android.widget.ImageButton;
@@ -91,15 +92,21 @@ public class WhisperInputMethodService extends InputMethodService {
     // ── Widgets — assigned in onCreateInputView, null before first inflation ─
     private ImageButton  btnRecord;
     private ImageButton  btnKeyboard;
-    private ImageButton  btnSettings;
     private ImageButton  btnSend;
     private ImageButton  btnUndo;
     private ImageButton  btnRedo;
     private ImageButton  btnDel;
     private ImageButton  btnEnter;
-    private View         btnCancel;   // TextView in layout, declared as View
-    private View         btnClear;    // TextView in layout, declared as View
-    private View         btnSpace;    // TextView in layout, declared as View
+    private View         btnCancel;    // TextView in layout, declared as View
+    private View         btnClear;     // Delete Unselected — TextView
+    private View         btnSpace;     // TextView
+    private View         btnDiscard;   // Discard Audio — TextView
+    private View         btnSelectAll; // Select All — TextView
+    private View         btnCut;       // Cut — TextView
+    private View         btnCopy;      // Copy — TextView
+    private View         btnPaste;     // Paste — TextView
+    private View         btnFullStop;  // Full Stop — TextView (long press = punctuation popup)
+    private View         btnForwardDel; // Forward Delete — TextView
     private TextView     tvStatus;
     private ProgressBar  processingBar;
     private LinearLayout layoutKeyboardContent;
@@ -175,6 +182,8 @@ public class WhisperInputMethodService extends InputMethodService {
     // Long-press repeat runnables — stored as fields so onFinishInputView can cancel them
     private Runnable delInitial;
     private Runnable delFast;
+    private Runnable enterInitial;
+    private Runnable enterFast;
     private Recorder          mRecorder;
     private Whisper           mWhisper;
     private SharedPreferences sp;
@@ -300,8 +309,10 @@ public class WhisperInputMethodService extends InputMethodService {
         exitListeningMode(true);
 
         // Cancel any pending long-press repeat Runnables.
-        if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
-        if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
+        if (delInitial   != null) { handler.removeCallbacks(delInitial);   delInitial   = null; }
+        if (delFast      != null) { handler.removeCallbacks(delFast);      delFast      = null; }
+        if (enterInitial != null) { handler.removeCallbacks(enterInitial); enterInitial = null; }
+        if (enterFast    != null) { handler.removeCallbacks(enterFast);    enterFast    = null; }
 
         // Synchronously reset the visual state NOW, while widget references are
         // still valid. Android does NOT always call onCreateInputView() when the
@@ -332,7 +343,6 @@ public class WhisperInputMethodService extends InputMethodService {
         // ── Bind all widgets ───────────────────────────────────────────────────
         btnRecord             = view.findViewById(R.id.btnRecord);
         btnKeyboard           = view.findViewById(R.id.btnKeyboard);
-        btnSettings           = view.findViewById(R.id.btnSettings);
         btnSend               = view.findViewById(R.id.btnSend);
         btnUndo               = view.findViewById(R.id.btnUndo);
         btnRedo               = view.findViewById(R.id.btnRedo);
@@ -341,6 +351,13 @@ public class WhisperInputMethodService extends InputMethodService {
         btnCancel             = view.findViewById(R.id.btnCancel);
         btnClear              = view.findViewById(R.id.btnClear);
         btnSpace              = view.findViewById(R.id.btnSpace);
+        btnDiscard            = view.findViewById(R.id.btnDiscard);
+        btnSelectAll          = view.findViewById(R.id.btnSelectAll);
+        btnCut                = view.findViewById(R.id.btnCut);
+        btnCopy               = view.findViewById(R.id.btnCopy);
+        btnPaste              = view.findViewById(R.id.btnPaste);
+        btnFullStop           = view.findViewById(R.id.btnFullStop);
+        btnForwardDel         = view.findViewById(R.id.btnForwardDel);
         processingBar         = view.findViewById(R.id.processing_bar);
         tvStatus              = view.findViewById(R.id.tv_status);
         layoutKeyboardContent = view.findViewById(R.id.layout_keyboard_content);
@@ -389,32 +406,39 @@ public class WhisperInputMethodService extends InputMethodService {
             }
         });
 
-        // ── Cancel — hard stop in all modes ───────────────────────────────────
-        // Stops the recorder, cancels any in-progress transcription, discards
-        // the current audio buffer and goes idle immediately.
+        // ── Cancel — hard stop: discard everything, go idle ───────────────────
         btnCancel.setOnClickListener(v -> {
             tap(v);
             if (mWhisper != null) stopTranscription();
             exitListeningMode(true);
         });
 
-        // ── Settings ──────────────────────────────────────────────────────────
-        btnSettings.setOnClickListener(v -> {
+        // ── Discard Audio — discard current audio but stay listening ──────────
+        btnDiscard.setOnClickListener(v -> {
             tap(v);
-            Intent i = new Intent(this, SettingsActivity.class);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
+            discardAudioAndContinue();
         });
 
-        // ── Switch keyboard ────────────────────────────────────────────────────
+        // ── Keyboard — tap: switch keyboard  |  long-press: options popup ─────
         btnKeyboard.setOnClickListener(v -> {
             tap(v);
             if (mWhisper != null) stopTranscription();
-            exitListeningMode(false); // sync ok here — not yet hiding the view
+            exitListeningMode(false);
             switchToPreviousInputMethod();
         });
+        btnKeyboard.setOnLongClickListener(v -> {
+            showKeyboardOptionsPopup(v);
+            return true;
+        });
 
-        // ── Delete unselected text ─────────────────────────────────────────────
+        // ── Select All ────────────────────────────────────────────────────────
+        btnSelectAll.setOnClickListener(v -> {
+            tap(v);
+            if (getCurrentInputConnection() != null)
+                sendCtrlKey(KeyEvent.KEYCODE_A, false);
+        });
+
+        // ── Delete Unselected ─────────────────────────────────────────────────
         btnClear.setOnClickListener(v -> {
             tap(v);
             if (getCurrentInputConnection() == null) return;
@@ -422,24 +446,62 @@ public class WhisperInputMethodService extends InputMethodService {
                     .getExtractedText(new ExtractedTextRequest(), 0);
             if (et != null && et.text != null) {
                 int len = et.text.length();
-                CharSequence before = getCurrentInputConnection()
-                        .getTextBeforeCursor(len, 0);
-                CharSequence after = getCurrentInputConnection()
-                        .getTextAfterCursor(len, 0);
-                if (before != null && after != null) {
-                    getCurrentInputConnection()
-                            .deleteSurroundingText(before.length(), after.length());
-                }
+                CharSequence before = getCurrentInputConnection().getTextBeforeCursor(len, 0);
+                CharSequence after  = getCurrentInputConnection().getTextAfterCursor(len, 0);
+                if (before != null && after != null)
+                    getCurrentInputConnection().deleteSurroundingText(before.length(), after.length());
             }
         });
+
+        // ── Cut | Copy | Paste ────────────────────────────────────────────────
+        btnCut.setOnClickListener(v   -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_X, false); });
+        btnCopy.setOnClickListener(v  -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_C, false); });
+        btnPaste.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_V, false); });
 
         // ── Undo / Redo ────────────────────────────────────────────────────────
         btnUndo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
         btnRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
 
+        // ── Full Stop — tap: insert "."  |  long-press: punctuation popup ─────
+        btnFullStop.setOnClickListener(v -> {
+            tap(v);
+            if (getCurrentInputConnection() != null)
+                getCurrentInputConnection().commitText(".", 1);
+        });
+        btnFullStop.setOnLongClickListener(v -> {
+            showPunctuationPopup(v);
+            return true;
+        });
+
+        // ── Forward Delete ────────────────────────────────────────────────────
+        btnForwardDel.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    tap(v);
+                    doForwardDelete();
+                    delInitial = () -> {
+                        doForwardDelete();
+                        delFast = new Runnable() {
+                            @Override public void run() {
+                                doForwardDelete();
+                                handler.postDelayed(this, 50);
+                            }
+                        };
+                        handler.postDelayed(delFast, 50);
+                    };
+                    handler.postDelayed(delInitial, 400);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
+                    if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
+                    break;
+                default: break;
+            }
+            return true;
+        });
+
         // ── Backspace with long-press repeat ───────────────────────────────────
-        // Uses instance-level delInitial / delFast so onFinishInputView() can
-        // cancel them even if the view is torn down during a long-press.
         btnDel.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
@@ -484,19 +546,36 @@ public class WhisperInputMethodService extends InputMethodService {
                     && ei.actionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
                 getCurrentInputConnection().performEditorAction(ei.actionId);
             } else {
-                getCurrentInputConnection()
-                        .performEditorAction(EditorInfo.IME_ACTION_SEND);
+                getCurrentInputConnection().performEditorAction(EditorInfo.IME_ACTION_SEND);
             }
         });
 
-        // ── Enter / newline ────────────────────────────────────────────────────
-        btnEnter.setOnClickListener(v -> {
-            tap(v);
-            if (getCurrentInputConnection() == null) return;
-            getCurrentInputConnection().sendKeyEvent(
-                    new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-            getCurrentInputConnection().sendKeyEvent(
-                    new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+        // ── Enter with long-press repeat ───────────────────────────────────────
+        btnEnter.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    tap(v);
+                    doEnter();
+                    enterInitial = () -> {
+                        doEnter();
+                        enterFast = new Runnable() {
+                            @Override public void run() {
+                                doEnter();
+                                handler.postDelayed(this, 50);
+                            }
+                        };
+                        handler.postDelayed(enterFast, 50);
+                    };
+                    handler.postDelayed(enterInitial, 400);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (enterInitial != null) { handler.removeCallbacks(enterInitial); enterInitial = null; }
+                    if (enterFast    != null) { handler.removeCallbacks(enterFast);    enterFast    = null; }
+                    break;
+                default: break;
+            }
+            return true;
         });
 
         return view;
@@ -791,6 +870,151 @@ public class WhisperInputMethodService extends InputMethodService {
      * Used by the record button when tapped while active.
      * The cancel button uses exitListeningMode() which discards everything.
      */
+    // ═══════════════════════════════════════════════════════════════════════════
+    // New action methods
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Discard current audio and keep listening.
+     * Like cancel, but stays in the session — the session ID does not change and
+     * cancelRequested is never set, so a new recording starts seamlessly.
+     */
+    private void discardAudioAndContinue() {
+        if (!isListening) return;
+        audioQueue.clear();
+        if (mWhisper != null) mWhisper.stop();
+        resetProgressUi();
+
+        if (mRecorder.isInProgress()) {
+            // Stop current recording then restart within same session
+            final Recorder r   = mRecorder;
+            final int curSid   = sessionGen;
+            final boolean vad  = continuousMode;
+            if (!stopExecutor.isShutdown()) {
+                stopExecutor.execute(() -> {
+                    if (r.isInProgress()) r.stop();
+                    handler.post(() -> {
+                        if (sessionGen != curSid || !isListening || cancelRequested) return;
+                        activeRecordingSessionId = curSid;
+                        if (vad) mRecorder.initVad();
+                        mRecorder.start();
+                        setMicState(MicState.LISTENING);
+                    });
+                });
+            }
+        } else {
+            // Recorder idle — restart directly
+            activeRecordingSessionId = sessionGen;
+            if (continuousMode) mRecorder.initVad();
+            mRecorder.start();
+            setMicState(MicState.LISTENING);
+        }
+    }
+
+    /**
+     * Show the keyboard long-press options popup above the anchor view.
+     * Three options: [Toggle Streaming] [⌨ Keyboard] [⚙ Settings]
+     */
+    private void showKeyboardOptionsPopup(View anchor) {
+        android.view.LayoutInflater inflater = android.view.LayoutInflater.from(this);
+        android.view.View popupView = inflater.inflate(R.layout.popup_keyboard_options, null);
+
+        // Update streaming label to show current state
+        android.widget.TextView tvStreaming = popupView.findViewById(R.id.popup_streaming);
+        tvStreaming.setText("Streaming\n" + (prefAutoStop ? "ON" : "OFF"));
+
+        PopupWindow popup = new PopupWindow(popupView,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setElevation(8f);
+        popup.setOutsideTouchable(true);
+
+        // Position above anchor
+        popupView.measure(android.view.View.MeasureSpec.UNSPECIFIED,
+                          android.view.View.MeasureSpec.UNSPECIFIED);
+        int popupH = popupView.getMeasuredHeight();
+        popup.showAsDropDown(anchor, 0, -anchor.getHeight() - popupH - 8);
+
+        // Option handlers
+        tvStreaming.setOnClickListener(v -> {
+            tap(v);
+            popup.dismiss();
+            prefAutoStop = !prefAutoStop;
+            sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
+            // If currently listening in streaming mode, update continuousMode
+            if (isListening) continuousMode = prefAutoStop;
+            Log.d(TAG, "Streaming toggled to: " + prefAutoStop);
+        });
+
+        popupView.findViewById(R.id.popup_keyboard).setOnClickListener(v -> {
+            tap(v);
+            popup.dismiss();
+            if (mWhisper != null) stopTranscription();
+            exitListeningMode(false);
+            switchToPreviousInputMethod();
+        });
+
+        popupView.findViewById(R.id.popup_settings).setOnClickListener(v -> {
+            tap(v);
+            popup.dismiss();
+            Intent i = new Intent(this, SettingsActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        });
+    }
+
+    /**
+     * Show punctuation popup on long-press of the full-stop button.
+     * Options: ,  !  ?  -  (  )
+     */
+    private void showPunctuationPopup(View anchor) {
+        android.view.LayoutInflater inflater = android.view.LayoutInflater.from(this);
+        android.view.View popupView = inflater.inflate(R.layout.popup_punctuation, null);
+
+        PopupWindow popup = new PopupWindow(popupView,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setElevation(8f);
+        popup.setOutsideTouchable(true);
+
+        popupView.measure(android.view.View.MeasureSpec.UNSPECIFIED,
+                          android.view.View.MeasureSpec.UNSPECIFIED);
+        int popupH = popupView.getMeasuredHeight();
+        popup.showAsDropDown(anchor, 0, -anchor.getHeight() - popupH - 8);
+
+        int[] ids = {R.id.punct_comma, R.id.punct_exclaim, R.id.punct_question,
+                     R.id.punct_dash,  R.id.punct_lparen,  R.id.punct_rparen};
+        String[] chars = {",", "!", "?", "-", "(", ")"};
+
+        for (int i = 0; i < ids.length; i++) {
+            final String ch = chars[i];
+            popupView.findViewById(ids[i]).setOnClickListener(v -> {
+                tap(v);
+                popup.dismiss();
+                if (getCurrentInputConnection() != null)
+                    getCurrentInputConnection().commitText(ch, 1);
+            });
+        }
+    }
+
+    private void doEnter() {
+        if (getCurrentInputConnection() == null) return;
+        getCurrentInputConnection().sendKeyEvent(
+                new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+        getCurrentInputConnection().sendKeyEvent(
+                new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+    }
+
+    private void doForwardDelete() {
+        if (getCurrentInputConnection() == null) return;
+        CharSequence sel = getCurrentInputConnection().getSelectedText(0);
+        if (sel != null && sel.length() > 0) {
+            getCurrentInputConnection().commitText("", 1);
+        } else {
+            getCurrentInputConnection().deleteSurroundingText(0, 1);
+        }
+    }
+
     private void stopListeningGracefully() {
         continuousMode        = false;   // stop the continuous loop
         isListening           = false;   // prevent auto-restart
@@ -975,9 +1199,14 @@ public class WhisperInputMethodService extends InputMethodService {
     // ═══════════════════════════════════════════════════════════════════════════
 
     private void setCancelEnabled(boolean enabled) {
-        if (btnCancel == null) return;
-        btnCancel.setEnabled(enabled);
-        btnCancel.setAlpha(enabled ? 1.0f : 0.4f);
+        if (btnCancel != null) {
+            btnCancel.setEnabled(enabled);
+            btnCancel.setAlpha(enabled ? 1.0f : 0.4f);
+        }
+        if (btnDiscard != null) {
+            btnDiscard.setEnabled(enabled);
+            btnDiscard.setAlpha(enabled ? 1.0f : 0.4f);
+        }
     }
 
     private void resetProgressUi() {

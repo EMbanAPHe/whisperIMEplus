@@ -99,16 +99,18 @@ public class Recorder {
     }
 
     public void initVad() {
-        int silenceDurationMs = sp.getInt("silenceDurationMs", 800);
+        int silenceDurationMs = sp.getInt("silenceDurationMs", 1000);
+        int speechDurationMs  = sp.getInt("vadSpeechDurationMs", 200);
         vad = Vad.builder()
                 .setSampleRate(SampleRate.SAMPLE_RATE_16K)
                 .setFrameSize(FrameSize.FRAME_SIZE_480)
                 .setMode(Mode.VERY_AGGRESSIVE)
                 .setSilenceDurationMs(silenceDurationMs)
-                .setSpeechDurationMs(200)
+                .setSpeechDurationMs(speechDurationMs)
                 .build();
         useVAD = true;
-        Log.d(TAG, "VAD initialized");
+        Log.d(TAG, "VAD initialized: silenceMs=" + silenceDurationMs
+                + " speechMs=" + speechDurationMs);
     }
 
     /**
