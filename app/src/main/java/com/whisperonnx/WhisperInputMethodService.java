@@ -133,7 +133,9 @@ public class WhisperInputMethodService extends InputMethodService {
     private boolean prefAutoSwitch;
     private boolean prefAutoSend;
 
-    // ── Core — created once in onCreate(), never recreated ────────────────────
+    // Long-press repeat runnables — stored as fields so onDestroyInputView can cancel them
+    private Runnable delInitial;
+    private Runnable delFast;
     private Recorder          mRecorder;
     private Whisper           mWhisper;
     private SharedPreferences sp;
@@ -181,14 +183,28 @@ public class WhisperInputMethodService extends InputMethodService {
 
     @Override
     public void onDestroy() {
-        // Stop any active session synchronously — service is being killed
+        // Cancel all pending handler callbacks first, before anything else.
+        // This prevents post-destroy Runnables (from Whisper/Recorder callbacks
+        // still in flight) from running against null or stale widget references.
+        handler.removeCallbacksAndMessages(null);
+
+        // Stop any active session. Check isInProgress inside the call — no TOCTOU
+        // risk here since we're on the main thread and about to block on stop().
         cancelRequested = true;
         continuousMode  = false;
         audioQueue.clear();
         if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
 
-        // Release the ONNX model and recognizer
-        if (mWhisper != null) { mWhisper.unloadModel(); mWhisper = null; }
+        // Stop Whisper inference before releasing the model. mWhisper.stop() sets
+        // mInProgress=false so the processRecordBufferLoop thread stops waiting for
+        // a new task and the recognizer.destroy() call below happens cleanly.
+        // This also prevents the processRecordBufferLoop thread from being left
+        // permanently blocked on hasTask.await() after recognizer.destroy().
+        if (mWhisper != null) {
+            mWhisper.stop();       // signal inference to stop if running
+            mWhisper.unloadModel(); // destroy the ONNX recognizer
+            mWhisper = null;
+        }
 
         super.onDestroy();
     }
@@ -228,6 +244,33 @@ public class WhisperInputMethodService extends InputMethodService {
         // Keyboard is hiding — stop the session asynchronously so we never
         // block the main thread waiting for the recorder to drain.
         exitListeningMode(true);
+    }
+
+    @Override
+    public void onDestroyInputView() {
+        // Cancel any pending long-press repeat Runnables before nulling btnDel
+        if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
+        if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
+
+        // Null out all widget references so that any handler.post() callbacks
+        // that fire between view destruction and next onCreateInputView() don't
+        // operate on a detached view hierarchy. setMicState, setCancelEnabled,
+        // and resetProgressUi all guard against null, so this is safe.
+        btnRecord             = null;
+        btnKeyboard           = null;
+        btnSettings           = null;
+        btnSend               = null;
+        btnUndo               = null;
+        btnRedo               = null;
+        btnDel                = null;
+        btnEnter              = null;
+        btnCancel             = null;
+        btnClear              = null;
+        btnSpace              = null;
+        tvStatus              = null;
+        processingBar         = null;
+        layoutKeyboardContent = null;
+        super.onDestroyInputView();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -349,36 +392,33 @@ public class WhisperInputMethodService extends InputMethodService {
         btnRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
 
         // ── Backspace with long-press repeat ───────────────────────────────────
-        btnDel.setOnTouchListener(new View.OnTouchListener() {
-            private Runnable initial, fast;
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        tap(v);
+        // Uses instance-level delInitial / delFast so onDestroyInputView() can
+        // cancel them even if the view is torn down during a long-press.
+        btnDel.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    tap(v);
+                    doDelete();
+                    delInitial = () -> {
                         doDelete();
-                        initial = () -> {
-                            doDelete();
-                            fast = new Runnable() {
-                                @Override public void run() {
-                                    doDelete();
-                                    // No haptic on auto-repeat (would be overwhelming)
-                                    handler.postDelayed(this, 50);
-                                }
-                            };
-                            handler.postDelayed(fast, 50);
+                        delFast = new Runnable() {
+                            @Override public void run() {
+                                doDelete();
+                                handler.postDelayed(this, 50);
+                            }
                         };
-                        handler.postDelayed(initial, 400);
-                        break;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        if (initial != null) handler.removeCallbacks(initial);
-                        if (fast    != null) handler.removeCallbacks(fast);
-                        break;
-                    default: break;
-                }
-                return true;
+                        handler.postDelayed(delFast, 50);
+                    };
+                    handler.postDelayed(delInitial, 400);
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
+                    if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
+                    break;
+                default: break;
             }
+            return true;
         });
 
         // ── Space bar ─────────────────────────────────────────────────────────
@@ -642,27 +682,37 @@ public class WhisperInputMethodService extends InputMethodService {
      * reset the mic button to IDLE.
      *
      * @param async  true  → Recorder.stop() runs on a background thread.
-     *                        Use for Cancel, mic-tap-to-stop, and all lifecycle
-     *                        callbacks to avoid blocking the main thread.
-     *               false → Recorder.stop() runs synchronously.
-     *                        Only safe when we know recording is not in progress.
+     *                        The isInProgress() check is done INSIDE the thread,
+     *                        not before starting it, eliminating the TOCTOU race
+     *                        where recording could end naturally between the check
+     *                        and the wait() call inside stop(). If recording has
+     *                        already ended, isInProgress() returns false and we
+     *                        skip stop() entirely — no deadlock.
+     *               false → synchronous. Only used from btnKeyboard where we
+     *                        know recording is not in progress (session was
+     *                        already stopped before this call).
      */
     private void exitListeningMode(boolean async) {
-        cancelRequested         = true;
-        continuousMode          = false;
-        isListening             = false;
-        isRecording             = false;
+        cancelRequested = true;
+        continuousMode  = false;
+        isListening     = false;
+        isRecording     = false;
 
-        if (mRecorder != null && mRecorder.isInProgress()) {
+        if (mRecorder != null) {
             if (async) {
-                new Thread(() -> mRecorder.stop(), "RecorderStopper").start();
+                final Recorder r = mRecorder;
+                new Thread(() -> {
+                    // Check isInProgress() here, inside the thread, so the
+                    // check and the stop()/wait() happen without a gap.
+                    if (r.isInProgress()) r.stop();
+                }, "RecorderStopper").start();
             } else {
-                mRecorder.stop();
+                if (mRecorder.isInProgress()) mRecorder.stop();
             }
         }
 
-        // Update UI immediately (cancelRequested will suppress any pending
-        // MSG_RECORDING_DONE from triggering transcription)
+        // Update UI immediately — cancelRequested suppresses any pending
+        // MSG_RECORDING_DONE from triggering transcription.
         handler.post(() -> {
             audioQueue.clear();
             setMicState(MicState.IDLE);
