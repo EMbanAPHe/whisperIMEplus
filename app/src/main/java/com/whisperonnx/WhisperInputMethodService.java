@@ -372,8 +372,10 @@ public class WhisperInputMethodService extends InputMethodService {
         btnRecord.setOnClickListener(v -> {
             tap(v);
             if (isListening) {
-                // Tapped while active → exit listening mode entirely
-                exitListeningMode(true);
+                // Stop recording and the continuous loop, but let any in-progress
+                // transcription finish and commit. If you want to DISCARD the current
+                // audio use the Cancel button instead.
+                stopListeningGracefully();
             } else {
                 if (!checkRecordPermission()) return;
                 if (!modelReady) {
@@ -682,9 +684,20 @@ public class WhisperInputMethodService extends InputMethodService {
                         return;
                     }
                     if (!continuousMode) {
-                        isListening = false;
-                        setMicState(MicState.IDLE);
-                        setCancelEnabled(false);
+                        // Drain any remaining queued segments (e.g. pipelined audio
+                        // that arrived while we were transcribing this one) before
+                        // going IDLE. processNextQueued() starts Whisper if queued;
+                        // it will return here when done and reach the else branch.
+                        processNextQueued();
+                        if (!mWhisper.isInProgress()) {
+                            // Queue was empty — nothing started, go idle now.
+                            isListening = false;
+                            setMicState(MicState.IDLE);
+                            setCancelEnabled(false);
+                        }
+                        // else: Whisper started on next queued segment; when it
+                        // finishes onResultReceived fires again, hits this same
+                        // branch, drains again until the queue is empty.
                     } else {
                         processNextQueued();
                     }
@@ -738,6 +751,46 @@ public class WhisperInputMethodService extends InputMethodService {
             activeRecordingSessionId = sid;
             if (useVad) mRecorder.initVad();
             mRecorder.start();
+        }
+    }
+
+    /**
+     * Soft stop — stops recording and the continuous loop but does NOT set
+     * cancelRequested.  Any transcription currently in progress finishes
+     * normally and its result is committed to the text field.  Goes IDLE
+     * once the queue is fully drained.
+     *
+     * Used by the record button when tapped while active.
+     * The cancel button uses exitListeningMode() which discards everything.
+     */
+    private void stopListeningGracefully() {
+        continuousMode        = false;   // stop the continuous loop
+        isListening           = false;   // prevent auto-restart
+        pendingStartSessionId = 0;       // cancel any deferred recorder start
+        // cancelRequested stays false — Whisper result will be committed normally.
+        // sessionGen is NOT incremented — existing session IDs remain valid so
+        // all in-flight callbacks (MSG_RECORDING_DONE, onResultReceived) pass
+        // their session guards and process normally.
+
+        if (mRecorder != null) {
+            final Recorder r = mRecorder;
+            if (!stopExecutor.isShutdown()) {
+                stopExecutor.execute(() -> { if (r.isInProgress()) r.stop(); });
+            } else {
+                if (r.isInProgress()) new Thread(r::stop, "RecorderStopper").start();
+            }
+        }
+
+        // If Whisper is processing or audio is queued, stay in LISTENING (dim)
+        // state so the user sees the result is still pending.
+        // onResultReceived will drain the queue and go IDLE when done.
+        if ((mWhisper != null && mWhisper.isInProgress()) || !audioQueue.isEmpty()) {
+            setMicState(MicState.LISTENING);
+            // Cancel button remains enabled so the user can still discard
+        } else {
+            setMicState(MicState.IDLE);
+            setCancelEnabled(false);
+            resetProgressUi();
         }
     }
 
