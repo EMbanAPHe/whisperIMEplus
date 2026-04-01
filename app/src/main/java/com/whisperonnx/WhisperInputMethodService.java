@@ -121,24 +121,29 @@ public class WhisperInputMethodService extends InputMethodService {
     private volatile boolean modelReady      = false;
 
     /**
-     * Session generation counter.  Incremented by startRecordingSession() and
-     * exitListeningMode().  Every callback captures the current value at the
-     * moment it is created and checks it before acting, so stale callbacks from
-     * a closed or cancelled session can never affect a subsequent session.
+     * Session lifecycle counters — each is incremented when the corresponding
+     * operation starts, and callbacks capture the value AT START TIME, not at
+     * fire time.  This means a callback can never act on behalf of a session
+     * that was superseded, even if it fires after a new session has begun.
      *
-     * This solves three races:
-     *  1. RecorderStopper queued for session N fires after session N+1 starts,
-     *     stopping the new recording.
-     *  2. Stale handler.post() from onResultReceived (session N) fires after
-     *     session N+1 has already set the mic to LISTENING, resetting it to IDLE.
-     *  3. cancelRequested is reset by session N+1 before session N's callbacks
-     *     have all drained from the handler queue.
+     * sessionGen       — master counter; incremented by startRecordingSession()
+     *                    and exitListeningMode().  Used for UI-only callbacks
+     *                    (exitListeningMode's handler.post) and RecorderStopper.
      *
-     * Accessed only on the main thread (reads in lambdas are at capture time or
-     * inside handler.post, which is main thread). Declared volatile so background
-     * threads (Recorder, Whisper) that capture it see the latest value.
+     * activeRecordingSessionId — set to the new sessionGen value each time
+     *                    mRecorder.start() is called.  The recorder listener
+     *                    captures this at callback-fire time, so it always
+     *                    reflects the session that STARTED the recording it
+     *                    is reporting on.
+     *
+     * activeWhisperSessionId   — set to sessionGen each time mWhisper.start()
+     *                    is called (inside startTranscription).  The Whisper
+     *                    listener captures this so stale inference results from
+     *                    a closed or cancelled session are never committed.
      */
-    private volatile int sessionGen = 0;
+    private volatile int sessionGen                 = 0;
+    private volatile int activeRecordingSessionId   = 0;
+    private volatile int activeWhisperSessionId     = 0;
 
     /**
      * Pipelined audio segments waiting to be transcribed.
@@ -489,21 +494,24 @@ public class WhisperInputMethodService extends InputMethodService {
     private void setRecorderListener() {
         mRecorder.setListener(message -> {
             // Called on Recorder worker thread — all UI via handler.post().
-            // Capture sessionGen here (on the worker thread) so we can reject
-            // callbacks that belong to a session that has since been superseded.
-            final int sid = sessionGen;
+            //
+            // Capture activeRecordingSessionId, NOT sessionGen. This field is
+            // stamped at the moment mRecorder.start() is called for THIS recording,
+            // so sid always reflects which session owns the recording being reported.
+            // If a new session starts before this callback fires, activeRecordingSessionId
+            // will have a new value and the guard will correctly discard this callback.
+            final int sid = activeRecordingSessionId;
 
             if (message.equals(Recorder.MSG_RECORDING)) {
                 isRecording = true;
                 handler.post(() -> {
-                    if (sessionGen != sid) return;
+                    if (activeRecordingSessionId != sid) return;
                     setMicState(MicState.RECORDING);
                 });
 
             } else if (message.equals(Recorder.MSG_RECORDING_DONE)) {
                 // IMPORTANT: recordLoop()'s finally { mInProgress.set(false) } has
-                // NOT yet run at this point. We must not call mRecorder.start() here
-                // directly; we POST to the handler so it runs after the finally block.
+                // NOT yet run. POST to handler so it runs after the finally block.
                 isRecording = false;
                 HapticFeedback.vibrate(mContext);
 
@@ -511,13 +519,15 @@ public class WhisperInputMethodService extends InputMethodService {
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
 
                     handler.post(() -> {
-                        // Reject if this session was superseded or cancelled
-                        if (sessionGen != sid || cancelRequested) return;
+                        if (activeRecordingSessionId != sid || cancelRequested) return;
 
                         audioQueue.offer(capturedAudio);
                         processNextQueued();
 
                         if (continuousMode) {
+                            // Re-stamp before starting the next recording so its
+                            // callbacks are tied to the same session ID.
+                            activeRecordingSessionId = sid;
                             mRecorder.initVad();
                             mRecorder.start();
                             setMicState(MicState.LISTENING);
@@ -527,11 +537,11 @@ public class WhisperInputMethodService extends InputMethodService {
                     });
                 } else {
                     // Cancelled — go idle. Do NOT reset cancelRequested (Whisper
-                    // inference may still be running; its guard reads the flag).
+                    // may still be processing; its guard reads this flag).
                     isListening    = false;
                     continuousMode = false;
                     handler.post(() -> {
-                        if (sessionGen != sid) return;
+                        if (activeRecordingSessionId != sid) return;
                         audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
@@ -545,7 +555,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 continuousMode = false;
                 HapticFeedback.vibrate(mContext);
                 handler.post(() -> {
-                    if (sessionGen != sid) return;
+                    if (activeRecordingSessionId != sid) return;
                     setMicState(MicState.IDLE);
                     setCancelEnabled(false);
                     if (tvStatus != null) {
@@ -571,16 +581,36 @@ public class WhisperInputMethodService extends InputMethodService {
             public void onResultReceived(WhisperResult whisperResult) {
                 // Runs on Whisper inference thread.
                 //
-                // Capture the session ID first. If exitListeningMode or
-                // startRecordingSession ran while we were doing inference,
-                // sessionGen will differ and all handler.post() calls become no-ops.
-                final int sid = sessionGen;
+                // Capture activeWhisperSessionId — stamped at the moment
+                // mWhisper.start() was called for THIS inference job, not at
+                // callback-fire time. This means:
+                //   • If cancel was pressed then record was tapped again
+                //     (startRecordingSession increments sessionGen, resets
+                //     cancelRequested=false, but does NOT change
+                //     activeWhisperSessionId until the next transcription starts),
+                //     sid != sessionGen and we discard the old result.
+                //   • If the keyboard was closed mid-inference, same protection.
+                final int sid = activeWhisperSessionId;
 
-                // Cancel guard — before committing any text.
-                // cancelRequested is volatile so this cross-thread read is safe.
+                // Primary guard: session mismatch means this result is stale.
+                if (sessionGen != sid) {
+                    handler.post(() -> {
+                        // Only clean up if no new session has started since
+                        if (sessionGen == sid) {
+                            audioQueue.clear();
+                            isListening = false;
+                            setMicState(MicState.IDLE);
+                            setCancelEnabled(false);
+                            resetProgressUi();
+                        }
+                    });
+                    return;
+                }
+
+                // Secondary guard: cancelled
                 if (cancelRequested) {
                     handler.post(() -> {
-                        if (sessionGen != sid) return;
+                        if (activeWhisperSessionId != sid) return;
                         audioQueue.clear();
                         isListening = false;
                         setMicState(MicState.IDLE);
@@ -591,7 +621,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 }
 
                 handler.post(() -> {
-                    if (sessionGen == sid) resetProgressUi();
+                    if (activeWhisperSessionId == sid) resetProgressUi();
                 });
 
                 // Chinese script conversion
@@ -602,6 +632,7 @@ public class WhisperInputMethodService extends InputMethodService {
                                     : ZhConverterUtil.toTraditional(result);
                 }
 
+                // Commit text — guarded by session check on this thread
                 final String trimmed = result.trim();
                 if (!trimmed.isEmpty() && getCurrentInputConnection() != null) {
                     getCurrentInputConnection().commitText(trimmed + " ", 1);
@@ -623,7 +654,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 if (prefAutoSwitch && !continuousMode) {
                     isListening = false;
                     handler.post(() -> {
-                        if (sessionGen != sid) return;
+                        if (activeWhisperSessionId != sid) return;
                         audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
@@ -632,10 +663,9 @@ public class WhisperInputMethodService extends InputMethodService {
                     return;
                 }
 
-                // Post-result state update
+                // Post-result state update on main thread
                 handler.post(() -> {
-                    if (sessionGen != sid || cancelRequested) {
-                        // Session changed or cancelled while we were transcribing
+                    if (activeWhisperSessionId != sid || cancelRequested) {
                         audioQueue.clear();
                         isListening = false;
                         setMicState(MicState.IDLE);
@@ -647,8 +677,6 @@ public class WhisperInputMethodService extends InputMethodService {
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
                     } else {
-                        // Drain queue — process next buffered segment if one
-                        // arrived while Whisper was busy with this one.
                         processNextQueued();
                     }
                 });
@@ -671,10 +699,11 @@ public class WhisperInputMethodService extends InputMethodService {
         cancelRequested = false;
         isListening     = true;
         continuousMode  = useVad;
-        final int sid   = ++sessionGen;   // new session — invalidates all prior callbacks
+        final int sid   = ++sessionGen;
+        activeRecordingSessionId = sid;   // stamp BEFORE mRecorder.start()
 
         handler.post(() -> {
-            if (sessionGen != sid) return; // superseded by another session
+            if (sessionGen != sid) return;
             setMicState(MicState.LISTENING);
             setCancelEnabled(true);
             if (tvStatus != null) tvStatus.setVisibility(View.GONE);
@@ -746,12 +775,12 @@ public class WhisperInputMethodService extends InputMethodService {
             processingBar.setProgress(0);
             processingBar.setIndeterminate(true);
         }
-        // Write the snapshot to RecordBuffer before calling mWhisper.start().
-        // RecordBuffer.setOutputBuffer() is synchronized, safe from main thread.
         RecordBuffer.setOutputBuffer(audioBytes);
         mWhisper.setAction(translate ? ACTION_TRANSLATE : ACTION_TRANSCRIBE);
         mWhisper.setLanguage(sp != null ? sp.getString("language", "auto") : "auto");
-        Log.d(TAG, "startTranscription: " + audioBytes.length + " bytes, translate=" + translate);
+        activeWhisperSessionId = sessionGen;  // stamp BEFORE mWhisper.start()
+        Log.d(TAG, "startTranscription: " + audioBytes.length + " bytes, translate=" + translate
+                + " session=" + activeWhisperSessionId);
         mWhisper.start();
     }
 
