@@ -40,13 +40,23 @@ public class Recorder {
     public static final String MSG_RECORDING_DONE = "Recording done...!";
     public static final String MSG_RECORDING_ERROR = "Recording error...";
 
+    /**
+     * Maximum time (ms) that stop() will wait for the recording thread to finish
+     * draining audio and calling notify().  Under normal operation the thread
+     * finishes within one audio-buffer read (~30 ms). 3 000 ms is a large safety
+     * margin that covers even worst-case audio-system latency and eliminates the
+     * permanent deadlock that could occur if the permission-revocation path or any
+     * future early-return skips the notify() call.
+     */
+    private static final long STOP_TIMEOUT_MS = 3_000;
+
     private final Context mContext;
     private final AtomicBoolean mInProgress = new AtomicBoolean(false);
 
     private RecorderListener mListener;
     private final Lock lock = new ReentrantLock();
     private final Condition hasTask = lock.newCondition();
-    private final Object fileSavedLock = new Object(); // Lock object for wait/notify
+    private final Object fileSavedLock = new Object();
 
     private volatile boolean shouldStartRecording = false;
     private boolean useVAD = false;
@@ -59,15 +69,13 @@ public class Recorder {
     public Recorder(Context context) {
         this.mContext = context;
         sp = PreferenceManager.getDefaultSharedPreferences(mContext);
-        // Initialize and start the worker thread
-        workerThread = new Thread(this::recordLoop);
+        workerThread = new Thread(this::recordLoop, "RecorderWorker");
         workerThread.start();
     }
 
     public void setListener(RecorderListener listener) {
         this.mListener = listener;
     }
-
 
     public void start() {
         if (!mInProgress.compareAndSet(false, true)) {
@@ -84,7 +92,7 @@ public class Recorder {
         }
     }
 
-    public void initVad(){
+    public void initVad() {
         int silenceDurationMs = sp.getInt("silenceDurationMs", 800);
         vad = Vad.builder()
                 .setSampleRate(SampleRate.SAMPLE_RATE_16K)
@@ -97,17 +105,24 @@ public class Recorder {
         Log.d(TAG, "VAD initialized");
     }
 
-
+    /**
+     * Signals the recording thread to stop and waits for it to finish.
+     *
+     * Uses a timed wait (STOP_TIMEOUT_MS) instead of an indefinite wait() so
+     * that this method always returns even if the recording thread exits via an
+     * early-return path that does not call notify() (e.g. permission revoked
+     * mid-session).  Under normal operation the thread calls notify() well within
+     * one audio buffer read (~30 ms), so the timeout is never reached.
+     */
     public void stop() {
         Log.d(TAG, "Recording stopped");
         mInProgress.set(false);
 
-        // Wait for the recording thread to finish
         synchronized (fileSavedLock) {
             try {
-                fileSavedLock.wait(); // Wait until notified by the recording thread
+                fileSavedLock.wait(STOP_TIMEOUT_MS);
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt(); // Restore interrupted status
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -120,7 +135,6 @@ public class Recorder {
         if (mListener != null)
             mListener.onUpdateReceived(message);
     }
-
 
     private void recordLoop() {
         while (true) {
@@ -137,7 +151,6 @@ public class Recorder {
                 lock.unlock();
             }
 
-            // Start recording process
             try {
                 recordAudio();
             } catch (Exception e) {
@@ -150,9 +163,13 @@ public class Recorder {
     }
 
     private void recordAudio() {
-        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
             Log.d(TAG, "AudioRecord permission is not granted");
             sendUpdate(mContext.getString(R.string.need_record_audio_permission));
+            // Notify stop() so it doesn't wait indefinitely.
+            // (This path does not reach the normal notify() at the end of the method.)
+            notifyStopWaiter();
             return;
         }
 
@@ -182,33 +199,33 @@ public class Recorder {
         AudioRecord audioRecord = builder.build();
         audioRecord.startRecording();
 
-        // Calculate maximum byte counts for 30 seconds (for saving)
         int bytesForThirtySeconds = sampleRateInHz * bytesPerSample * channels * 30;
 
-        ByteArrayOutputStream outputBuffer = new ByteArrayOutputStream(); // Buffer for saving data RecordBuffer
+        ByteArrayOutputStream outputBuffer = new ByteArrayOutputStream();
 
         byte[] audioData = new byte[bufferSize];
         int totalBytesRead = 0;
 
         boolean isSpeech;
         boolean isRecording = false;
-        byte[] vadAudioBuffer = new byte[VAD_FRAME_SIZE * 2];  //VAD needs 16 bit
+        byte[] vadAudioBuffer = new byte[VAD_FRAME_SIZE * 2];
 
         while (mInProgress.get() && totalBytesRead < bytesForThirtySeconds) {
             int bytesRead = audioRecord.read(audioData, 0, VAD_FRAME_SIZE * 2);
             if (bytesRead > 0) {
-                outputBuffer.write(audioData, 0, bytesRead);  // Save all bytes read up to 30 seconds
+                outputBuffer.write(audioData, 0, bytesRead);
                 totalBytesRead += bytesRead;
             } else {
                 Log.d(TAG, "AudioRecord error, bytes read: " + bytesRead);
                 break;
             }
 
-            if (useVAD){
+            if (useVAD) {
                 byte[] outputBufferByteArray = outputBuffer.toByteArray();
                 if (outputBufferByteArray.length >= VAD_FRAME_SIZE * 2) {
-                    // Always use the last VAD_FRAME_SIZE * 2 bytes (16 bit) from outputBuffer for VAD
-                    System.arraycopy(outputBufferByteArray, outputBufferByteArray.length - VAD_FRAME_SIZE * 2, vadAudioBuffer, 0, VAD_FRAME_SIZE * 2);
+                    System.arraycopy(outputBufferByteArray,
+                            outputBufferByteArray.length - VAD_FRAME_SIZE * 2,
+                            vadAudioBuffer, 0, VAD_FRAME_SIZE * 2);
 
                     isSpeech = vad.isSpeech(vadAudioBuffer);
                     if (isSpeech) {
@@ -231,7 +248,7 @@ public class Recorder {
         }
         Log.d(TAG, "Total bytes recorded: " + totalBytesRead);
 
-        if (useVAD){
+        if (useVAD) {
             useVAD = false;
             vad.close();
             vad = null;
@@ -242,19 +259,20 @@ public class Recorder {
         audioManager.stopBluetoothSco();
         audioManager.setBluetoothScoOn(false);
 
-        // Save recorded audio data to BufferStore (up to 30 seconds)
         RecordBuffer.setOutputBuffer(outputBuffer.toByteArray());
-        if (totalBytesRead > 6400){  //min 0.2s
+        if (totalBytesRead > 6400) {
             sendUpdate(MSG_RECORDING_DONE);
         } else {
             sendUpdate(MSG_RECORDING_ERROR);
         }
 
-        // Notify the waiting thread that recording is complete
-        synchronized (fileSavedLock) {
-            fileSavedLock.notify(); // Notify that recording is finished
-        }
-
+        notifyStopWaiter();
     }
 
+    /** Wakes any thread blocked in stop()'s timed wait. */
+    private void notifyStopWaiter() {
+        synchronized (fileSavedLock) {
+            fileSavedLock.notify();
+        }
+    }
 }

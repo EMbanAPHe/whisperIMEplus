@@ -41,34 +41,52 @@ public class Whisper {
     private Context mContext;
     private long startTime;
 
+    /**
+     * Reference to the processRecordBufferLoop thread so unloadModel() can
+     * interrupt it cleanly, preventing it from remaining permanently blocked
+     * on hasTask.await() after the recognizer has been destroyed.
+     */
+    private Thread processingThread = null;
+
     public Whisper(Context context) {
         mContext = context;
 
-        //check if model is installed
+        // Check if model is installed
         File sdcardDataFolder = mContext.getExternalFilesDir(null);
 
-        if (sdcardDataFolder != null && !sdcardDataFolder.exists() && !sdcardDataFolder.mkdirs()) {
+        if (sdcardDataFolder != null && !sdcardDataFolder.exists()
+                && !sdcardDataFolder.mkdirs()) {
             Log.e(TAG, "Failed to make directory: " + sdcardDataFolder);
+            return;
+        }
+
+        // Guard against null from getExternalFilesDir (e.g. external storage unavailable)
+        if (sdcardDataFolder == null) {
+            Log.e(TAG, "External files directory is null — cannot check model");
             return;
         }
 
         File[] files = sdcardDataFolder.listFiles();
 
-        int fileCount = 0;
-        for (File file : files) {
-            if (file.isFile()) {
-                fileCount++;
+        // listFiles() returns null if the path is not a directory or an I/O error occurs
+        int fileCount = (files != null) ? files.length : 0;
+        int modelFileCount = 0;
+        if (files != null) {
+            for (File file : files) {
+                if (file.isFile()) modelFileCount++;
             }
         }
-        if (fileCount != 6) { //install model
+
+        if (modelFileCount != 6) {
+            // Model not installed — launch setup
             Intent intent = new Intent(mContext, SetupActivity.class);
             intent.addFlags(FLAG_ACTIVITY_NEW_TASK);
             mContext.startActivity(intent);
-        } else { // Start thread for RecordBuffer transcription
-            Thread threadProcessRecordBuffer = new Thread(this::processRecordBufferLoop);
-            threadProcessRecordBuffer.start();
+        } else {
+            // Start the persistent processing thread
+            processingThread = new Thread(this::processRecordBufferLoop, "WhisperInference");
+            processingThread.start();
         }
-
     }
 
     public void setListener(WhisperListener listener) {
@@ -88,15 +106,13 @@ public class Whisper {
             }
         });
 
-
         recognizer.addCallback(new RecognizerListener() {
             @Override
-            public void onSpeechRecognizedResult(String text, String languageCode, double confidenceScore, boolean isFinal) {
+            public void onSpeechRecognizedResult(String text, String languageCode,
+                    double confidenceScore, boolean isFinal) {
                 Log.d(TAG, languageCode + " " + text);
-                WhisperResult whisperResult = new WhisperResult(text,languageCode, mAction);
-
+                WhisperResult whisperResult = new WhisperResult(text, languageCode, mAction);
                 sendResult(whisperResult);
-
                 long timeTaken = System.currentTimeMillis() - startTime;
                 Log.d(TAG, "Time Taken for transcription: " + timeTaken + "ms");
                 sendUpdate(MSG_PROCESSING_DONE);
@@ -109,9 +125,23 @@ public class Whisper {
         });
     }
 
+    /**
+     * Destroys the ONNX recognizer and interrupts the processing thread.
+     *
+     * Calling interrupt() on processingThread causes hasTask.await() to throw
+     * InterruptedException, which processRecordBufferLoop catches and uses to
+     * exit its loop cleanly.  Without this, the thread would remain permanently
+     * blocked after recognizer.destroy() is called, leaking a thread until the
+     * process is killed.
+     */
     public void unloadModel() {
+        if (processingThread != null) {
+            processingThread.interrupt();
+            processingThread = null;
+        }
         if (recognizer != null) {
             recognizer.destroy();
+            recognizer = null;
         }
     }
 
@@ -119,7 +149,7 @@ public class Whisper {
         this.mAction = action;
     }
 
-    public void setLanguage(String language){
+    public void setLanguage(String language) {
         this.mLangCode = language;
     }
 
@@ -150,16 +180,18 @@ public class Whisper {
             taskLock.lock();
             try {
                 while (!taskAvailable) {
-                    hasTask.await();
+                    hasTask.await(); // throws InterruptedException when interrupted
                 }
                 processRecordBuffer();
                 taskAvailable = false;
             } catch (InterruptedException e) {
+                // Restore interrupt flag and exit loop cleanly
                 Thread.currentThread().interrupt();
             } finally {
                 taskLock.unlock();
             }
         }
+        Log.d(TAG, "processRecordBufferLoop exiting cleanly");
     }
 
     private void processRecordBuffer() {
@@ -167,7 +199,7 @@ public class Whisper {
             if (RecordBuffer.getOutputBuffer() != null) {
                 startTime = System.currentTimeMillis();
                 sendUpdate(MSG_PROCESSING);
-                recognizer.recognize(RecordBuffer.getSamples(),1, mLangCode, mAction );
+                recognizer.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
             } else {
                 sendUpdate("Engine not initialized or file path not set");
             }
@@ -190,5 +222,4 @@ public class Whisper {
             mUpdateListener.onResultReceived(whisperResult);
         }
     }
-
 }
