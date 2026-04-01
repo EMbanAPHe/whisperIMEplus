@@ -69,7 +69,6 @@ public class Whisper {
         File[] files = sdcardDataFolder.listFiles();
 
         // listFiles() returns null if the path is not a directory or an I/O error occurs
-        int fileCount = (files != null) ? files.length : 0;
         int modelFileCount = 0;
         if (files != null) {
             for (File file : files) {
@@ -82,11 +81,11 @@ public class Whisper {
             Intent intent = new Intent(mContext, SetupActivity.class);
             intent.addFlags(FLAG_ACTIVITY_NEW_TASK);
             mContext.startActivity(intent);
-        } else {
-            // Start the persistent processing thread
-            processingThread = new Thread(this::processRecordBufferLoop, "WhisperInference");
-            processingThread.start();
         }
+        // processingThread is started at the end of loadModel() once the
+        // recognizer is initialised, not here. Starting it in the constructor
+        // before loadModel() is called would allow start() to signal the thread
+        // before recognizer exists, causing a NullPointerException.
     }
 
     public void setListener(WhisperListener listener) {
@@ -123,6 +122,11 @@ public class Whisper {
                 Log.d(TAG, "ERROR during recognition");
             }
         });
+
+        // Start the processing thread here, after recognizer is fully initialised,
+        // so processRecordBuffer() can never be called on a null recognizer.
+        processingThread = new Thread(this::processRecordBufferLoop, "WhisperInference");
+        processingThread.start();
     }
 
     /**
@@ -195,13 +199,17 @@ public class Whisper {
     }
 
     private void processRecordBuffer() {
+        // Capture a local reference to guard against unloadModel() nulling the field
+        // on another thread while inference is running (defensive; lifecycle should
+        // prevent this, but safe to be explicit).
+        final Recognizer r = recognizer;
         try {
-            if (RecordBuffer.getOutputBuffer() != null) {
+            if (r != null && RecordBuffer.getOutputBuffer() != null) {
                 startTime = System.currentTimeMillis();
                 sendUpdate(MSG_PROCESSING);
-                recognizer.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
+                r.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
             } else {
-                sendUpdate("Engine not initialized or file path not set");
+                sendUpdate("Engine not initialized or audio buffer is empty");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error during transcription", e);

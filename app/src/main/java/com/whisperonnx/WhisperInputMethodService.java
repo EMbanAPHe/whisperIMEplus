@@ -141,6 +141,17 @@ public class WhisperInputMethodService extends InputMethodService {
     private SharedPreferences sp;
     private final Handler     handler = new Handler(Looper.getMainLooper());
     private Context           mContext;
+    /**
+     * Single-threaded executor for Recorder.stop() calls.
+     * Prevents unbounded thread creation under rapid cancel/re-open cycles.
+     * Daemon thread so it does not block JVM shutdown.
+     */
+    private final java.util.concurrent.ExecutorService stopExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "RecorderStopper");
+                t.setDaemon(true);
+                return t;
+            });
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Service lifecycle  — Recorder and Whisper are created/destroyed here only
@@ -158,20 +169,18 @@ public class WhisperInputMethodService extends InputMethodService {
         mRecorder = new Recorder(this);
 
         // ── Whisper: load on a background thread to avoid main-thread blocking ─
-        // initModel() calls mWhisper.loadModel() → new Recognizer() which loads
-        // the ONNX model (1-3 s). By starting this in onCreate() the model is
-        // ready before the user first opens the keyboard, eliminating the pause.
         mWhisper = new Whisper(this);
+        final Whisper whisperRef = mWhisper; // local capture — immune to onDestroy nulling mWhisper
         new Thread(() -> {
-            mWhisper.loadModel();
+            whisperRef.loadModel();
             handler.post(() -> {
+                // Confirm mWhisper still points to the same instance (not destroyed)
+                if (mWhisper != whisperRef) return;
                 modelReady = true;
                 Log.d(TAG, "Model ready");
-                // If keyboard is already open and waiting, start listening now
                 if (isInputViewShown() && prefAutoStart && !isListening) {
                     startRecordingSession(prefAutoStop);
                 }
-                // Clear the "loading" status if it was showing
                 if (tvStatus != null) tvStatus.setVisibility(View.GONE);
             });
         }, "WhisperModelLoader").start();
@@ -188,12 +197,14 @@ public class WhisperInputMethodService extends InputMethodService {
         // still in flight) from running against null or stale widget references.
         handler.removeCallbacksAndMessages(null);
 
-        // Stop any active session. Check isInProgress inside the call — no TOCTOU
-        // risk here since we're on the main thread and about to block on stop().
+        // Shut down the RecorderStopper executor — no new tasks after this
+        stopExecutor.shutdownNow();
+
         cancelRequested = true;
         continuousMode  = false;
         audioQueue.clear();
         if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
+        if (mRecorder != null) mRecorder.shutdown();
 
         // Stop Whisper inference before releasing the model. mWhisper.stop() sets
         // mInProgress=false so the processRecordBufferLoop thread stops waiting for
@@ -697,11 +708,9 @@ public class WhisperInputMethodService extends InputMethodService {
         if (mRecorder != null) {
             if (async) {
                 final Recorder r = mRecorder;
-                new Thread(() -> {
-                    // Check isInProgress() here, inside the thread, so the
-                    // check and the stop()/wait() happen without a gap.
+                stopExecutor.execute(() -> {
                     if (r.isInProgress()) r.stop();
-                }, "RecorderStopper").start();
+                });
             } else {
                 if (mRecorder.isInProgress()) mRecorder.stop();
             }
@@ -878,34 +887,44 @@ public class WhisperInputMethodService extends InputMethodService {
                 new KeyEvent(t, t, KeyEvent.ACTION_UP, keyCode, 0, 0));
     }
 
+    /** True after the first loadPrefs() call has written all default values. */
+    private boolean prefsInitialised = false;
+
     /**
      * Reads preferences and writes defaults the first time so keys are
      * present in SharedPreferences before any Settings widget reads them.
+     * Default-writing is guarded by prefsInitialised so the disk write only
+     * happens once per service lifetime regardless of how many times loadPrefs
+     * is called.
      */
     private void loadPrefs() {
         if (sp == null) sp = PreferenceManager.getDefaultSharedPreferences(this);
-        SharedPreferences.Editor ed = null;
-        if (!sp.contains(SettingsActivity.KEY_LAUNCH_LISTENING)) {
-            if (ed == null) ed = sp.edit();
-            ed.putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
+
+        if (!prefsInitialised) {
+            SharedPreferences.Editor ed = null;
+            if (!sp.contains(SettingsActivity.KEY_LAUNCH_LISTENING)) {
+                if (ed == null) ed = sp.edit();
+                ed.putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
+            }
+            if (!sp.contains(SettingsActivity.KEY_AUTO_START)) {
+                if (ed == null) ed = sp.edit();
+                ed.putBoolean(SettingsActivity.KEY_AUTO_START, true);
+            }
+            if (!sp.contains(SettingsActivity.KEY_AUTO_STOP)) {
+                if (ed == null) ed = sp.edit();
+                ed.putBoolean(SettingsActivity.KEY_AUTO_STOP, true);
+            }
+            if (!sp.contains(SettingsActivity.KEY_AUTO_SWITCH)) {
+                if (ed == null) ed = sp.edit();
+                ed.putBoolean(SettingsActivity.KEY_AUTO_SWITCH, false);
+            }
+            if (!sp.contains(SettingsActivity.KEY_AUTO_SEND)) {
+                if (ed == null) ed = sp.edit();
+                ed.putBoolean(SettingsActivity.KEY_AUTO_SEND, false);
+            }
+            if (ed != null) ed.apply();
+            prefsInitialised = true;
         }
-        if (!sp.contains(SettingsActivity.KEY_AUTO_START)) {
-            if (ed == null) ed = sp.edit();
-            ed.putBoolean(SettingsActivity.KEY_AUTO_START, true);
-        }
-        if (!sp.contains(SettingsActivity.KEY_AUTO_STOP)) {
-            if (ed == null) ed = sp.edit();
-            ed.putBoolean(SettingsActivity.KEY_AUTO_STOP, true);
-        }
-        if (!sp.contains(SettingsActivity.KEY_AUTO_SWITCH)) {
-            if (ed == null) ed = sp.edit();
-            ed.putBoolean(SettingsActivity.KEY_AUTO_SWITCH, false);
-        }
-        if (!sp.contains(SettingsActivity.KEY_AUTO_SEND)) {
-            if (ed == null) ed = sp.edit();
-            ed.putBoolean(SettingsActivity.KEY_AUTO_SEND, false);
-        }
-        if (ed != null) ed.apply();
 
         prefAutoStart  = sp.getBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
         prefAutoStop   = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,        true);

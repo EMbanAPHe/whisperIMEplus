@@ -59,7 +59,7 @@ public class Recorder {
     private final Object fileSavedLock = new Object();
 
     private volatile boolean shouldStartRecording = false;
-    private boolean useVAD = false;
+    private volatile boolean useVAD = false;  // volatile: written on main, read on worker
     private VadWebRTC vad = null;
     private static final int VAD_FRAME_SIZE = 480;
     private SharedPreferences sp;
@@ -127,6 +127,15 @@ public class Recorder {
         }
     }
 
+    /**
+     * Permanently shuts down the Recorder.  Interrupts the worker thread so it
+     * exits its while(true) loop cleanly.  Call this from the IME's onDestroy()
+     * after stop() has been called.  The Recorder cannot be used after shutdown().
+     */
+    public void shutdown() {
+        workerThread.interrupt();
+    }
+
     public boolean isInProgress() {
         return mInProgress.get();
     }
@@ -184,8 +193,15 @@ public class Recorder {
         if (bufferSize < VAD_FRAME_SIZE * 2) bufferSize = VAD_FRAME_SIZE * 2;
 
         AudioManager audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-        audioManager.startBluetoothSco();
-        audioManager.setBluetoothScoOn(true);
+        // Only start Bluetooth SCO if a headset is connected — starting it
+        // unconditionally wakes the Bluetooth stack and causes minor battery drain
+        // and occasional audio routing glitches on devices with no BT headset.
+        boolean useBluetooth = audioManager.isBluetoothScoAvailableOffCall()
+                && audioManager.isBluetoothScoOn();
+        if (useBluetooth) {
+            audioManager.startBluetoothSco();
+            audioManager.setBluetoothScoOn(true);
+        }
 
         AudioRecord.Builder builder = new AudioRecord.Builder()
                 .setAudioSource(audioSource)
@@ -197,6 +213,17 @@ public class Recorder {
                 .setBufferSizeInBytes(bufferSize);
 
         AudioRecord audioRecord = builder.build();
+        if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord failed to initialise — state: " + audioRecord.getState());
+            audioRecord.release();
+            if (useBluetooth) {
+                audioManager.stopBluetoothSco();
+                audioManager.setBluetoothScoOn(false);
+            }
+            sendUpdate(MSG_RECORDING_ERROR);
+            notifyStopWaiter();
+            return;
+        }
         audioRecord.startRecording();
 
         int bytesForThirtySeconds = sampleRateInHz * bytesPerSample * channels * 30;
@@ -208,7 +235,10 @@ public class Recorder {
 
         boolean isSpeech;
         boolean isRecording = false;
-        byte[] vadAudioBuffer = new byte[VAD_FRAME_SIZE * 2];
+        // Fixed-size ring buffer for VAD — avoids the full outputBuffer.toByteArray()
+        // copy that previously happened on every iteration (creating a growing heap
+        // allocation every ~30ms, causing GC pressure over long recordings).
+        byte[] vadWindow = new byte[VAD_FRAME_SIZE * 2];
 
         while (mInProgress.get() && totalBytesRead < bytesForThirtySeconds) {
             int bytesRead = audioRecord.read(audioData, 0, VAD_FRAME_SIZE * 2);
@@ -221,24 +251,23 @@ public class Recorder {
             }
 
             if (useVAD) {
-                byte[] outputBufferByteArray = outputBuffer.toByteArray();
-                if (outputBufferByteArray.length >= VAD_FRAME_SIZE * 2) {
-                    System.arraycopy(outputBufferByteArray,
-                            outputBufferByteArray.length - VAD_FRAME_SIZE * 2,
-                            vadAudioBuffer, 0, VAD_FRAME_SIZE * 2);
+                // Copy the most recent VAD_FRAME_SIZE*2 bytes directly from audioData
+                // into vadWindow — no full outputBuffer.toByteArray() copy needed.
+                int srcLen = Math.min(bytesRead, VAD_FRAME_SIZE * 2);
+                System.arraycopy(audioData, bytesRead - srcLen, vadWindow,
+                        VAD_FRAME_SIZE * 2 - srcLen, srcLen);
 
-                    isSpeech = vad.isSpeech(vadAudioBuffer);
-                    if (isSpeech) {
-                        if (!isRecording) {
-                            Log.d(TAG, "VAD Speech detected: recording starts");
-                            sendUpdate(MSG_RECORDING);
-                        }
-                        isRecording = true;
-                    } else {
-                        if (isRecording) {
-                            isRecording = false;
-                            mInProgress.set(false);
-                        }
+                isSpeech = vad.isSpeech(vadWindow);
+                if (isSpeech) {
+                    if (!isRecording) {
+                        Log.d(TAG, "VAD Speech detected: recording starts");
+                        sendUpdate(MSG_RECORDING);
+                    }
+                    isRecording = true;
+                } else {
+                    if (isRecording) {
+                        isRecording = false;
+                        mInProgress.set(false);
                     }
                 }
             } else {
@@ -256,8 +285,10 @@ public class Recorder {
         }
         audioRecord.stop();
         audioRecord.release();
-        audioManager.stopBluetoothSco();
-        audioManager.setBluetoothScoOn(false);
+        if (useBluetooth) {
+            audioManager.stopBluetoothSco();
+            audioManager.setBluetoothScoOn(false);
+        }
 
         RecordBuffer.setOutputBuffer(outputBuffer.toByteArray());
         if (totalBytesRead > 6400) {
