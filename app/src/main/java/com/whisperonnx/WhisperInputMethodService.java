@@ -197,27 +197,26 @@ public class WhisperInputMethodService extends InputMethodService {
         // still in flight) from running against null or stale widget references.
         handler.removeCallbacksAndMessages(null);
 
-        // Shut down the RecorderStopper executor — no new tasks after this
-        stopExecutor.shutdownNow();
-
         cancelRequested = true;
         continuousMode  = false;
         audioQueue.clear();
         if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
         if (mRecorder != null) mRecorder.shutdown();
 
-        // Stop Whisper inference before releasing the model. mWhisper.stop() sets
-        // mInProgress=false so the processRecordBufferLoop thread stops waiting for
-        // a new task and the recognizer.destroy() call below happens cleanly.
-        // This also prevents the processRecordBufferLoop thread from being left
-        // permanently blocked on hasTask.await() after recognizer.destroy().
+        // Stop Whisper inference before releasing the model.
         if (mWhisper != null) {
-            mWhisper.stop();       // signal inference to stop if running
-            mWhisper.unloadModel(); // destroy the ONNX recognizer
+            mWhisper.stop();
+            mWhisper.unloadModel();
             mWhisper = null;
         }
 
+        // super.onDestroy() internally calls finishViews() → doFinishInput()
+        // → onFinishInputView() → exitListeningMode() → stopExecutor.execute().
+        // The executor MUST still be alive here, so shutdownNow() comes AFTER.
         super.onDestroy();
+
+        // Now safe — no more tasks will be submitted after this point.
+        stopExecutor.shutdownNow();
     }
 
     @Override
@@ -708,9 +707,15 @@ public class WhisperInputMethodService extends InputMethodService {
         if (mRecorder != null) {
             if (async) {
                 final Recorder r = mRecorder;
-                stopExecutor.execute(() -> {
-                    if (r.isInProgress()) r.stop();
-                });
+                if (!stopExecutor.isShutdown()) {
+                    stopExecutor.execute(() -> {
+                        if (r.isInProgress()) r.stop();
+                    });
+                } else {
+                    // Executor already shut down (e.g. called after onDestroy) —
+                    // fall back to a plain thread to avoid a crash.
+                    if (r.isInProgress()) new Thread(r::stop, "RecorderStopper").start();
+                }
             } else {
                 if (mRecorder.isInProgress()) mRecorder.stop();
             }
