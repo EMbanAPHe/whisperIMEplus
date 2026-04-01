@@ -33,7 +33,10 @@ import java.util.List;
 public class SettingsActivity extends AppCompatActivity {
     private static final String TAG = "SettingsActivity";
 
-    // Preference keys — must match the keys read in WhisperInputMethodService
+    // ── Preference keys ────────────────────────────────────────────────────────
+    // KEY_LAUNCH_LISTENING — new, separate: open keyboard in listening mode
+    public static final String KEY_LAUNCH_LISTENING = "imeLaunchListening";
+    // KEY_AUTO_START kept for backward compat; not used by IME any more.
     public static final String KEY_AUTO_START  = "imeAutoStart";
     public static final String KEY_AUTO_STOP   = "imeAutoStop";
     public static final String KEY_AUTO_SWITCH = "imeAutoSwitch";
@@ -72,7 +75,6 @@ public class SettingsActivity extends AppCompatActivity {
         ImageButton btnLang1 = findViewById(R.id.btnLang1);
         ImageButton btnLang2 = findViewById(R.id.btnLang2);
         langSelected = sp.getInt("langSelected", 1);
-
         updateLangButtons(btnLang1, btnLang2);
 
         btnLang1.setOnClickListener(v -> {
@@ -93,8 +95,10 @@ public class SettingsActivity extends AppCompatActivity {
         spinnerLanguage2IME = findViewById(R.id.spnrLanguage2_ime);
         List<Pair<String, String>> languagePairs = LanguagePairAdapter.getLanguagePairs(this);
 
-        LanguagePairAdapter adapter1 = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
-        LanguagePairAdapter adapter2 = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
+        LanguagePairAdapter adapter1 = new LanguagePairAdapter(
+                this, android.R.layout.simple_spinner_item, languagePairs);
+        LanguagePairAdapter adapter2 = new LanguagePairAdapter(
+                this, android.R.layout.simple_spinner_item, languagePairs);
         adapter1.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         adapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerLanguage1IME.setAdapter(adapter1);
@@ -103,22 +107,20 @@ public class SettingsActivity extends AppCompatActivity {
         spinnerLanguage2IME.setSelection(adapter2.getIndexByCode(sp.getString("language2", "auto")));
 
         spinnerLanguage1IME.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int i, long id) {
-                sp.edit().putString("language1", languagePairs.get(i).first)
-                        .apply();
+            @Override public void onItemSelected(AdapterView<?> p, View v, int i, long id) {
+                sp.edit().putString("language1", languagePairs.get(i).first).apply();
                 if (langSelected == 1)
                     sp.edit().putString("language", languagePairs.get(i).first).apply();
             }
-            @Override public void onNothingSelected(AdapterView<?> parent) {}
+            @Override public void onNothingSelected(AdapterView<?> p) {}
         });
         spinnerLanguage2IME.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int i, long id) {
-                sp.edit().putString("language2", languagePairs.get(i).first)
-                        .apply();
+            @Override public void onItemSelected(AdapterView<?> p, View v, int i, long id) {
+                sp.edit().putString("language2", languagePairs.get(i).first).apply();
                 if (langSelected == 2)
                     sp.edit().putString("language", languagePairs.get(i).first).apply();
             }
-            @Override public void onNothingSelected(AdapterView<?> parent) {}
+            @Override public void onNothingSelected(AdapterView<?> p) {}
         });
 
         modeSimpleChineseIME = findViewById(R.id.mode_simple_chinese_ime);
@@ -126,23 +128,27 @@ public class SettingsActivity extends AppCompatActivity {
         modeSimpleChineseIME.setOnCheckedChangeListener((btn, checked) ->
                 sp.edit().putBoolean("simpleChinese", checked).apply());
 
-        // ── Voice keyboard switches (NEW) ───────────────────────────────────────
-        wireSwitchCompat(R.id.switch_auto_start,  KEY_AUTO_START,  true);
+        // ── Voice keyboard switches ────────────────────────────────────────────
+        // Launch in listening mode — new, separate toggle
+        wireSwitchCompat(R.id.switch_launch_listening, KEY_LAUNCH_LISTENING, true);
+        // Streaming / auto-stop
         wireSwitchCompat(R.id.switch_auto_stop,   KEY_AUTO_STOP,   true);
         wireSwitchCompat(R.id.switch_auto_switch, KEY_AUTO_SWITCH, false);
         wireSwitchCompat(R.id.switch_auto_send,   KEY_AUTO_SEND,   false);
 
         // ── Recognition-service language spinner (existing, unchanged) ──────────
         spinnerLanguage = findViewById(R.id.spnrLanguage);
-        LanguagePairAdapter adapterRec = new LanguagePairAdapter(this, android.R.layout.simple_spinner_item, languagePairs);
+        LanguagePairAdapter adapterRec = new LanguagePairAdapter(
+                this, android.R.layout.simple_spinner_item, languagePairs);
         adapterRec.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerLanguage.setAdapter(adapterRec);
-        spinnerLanguage.setSelection(adapterRec.getIndexByCode(sp.getString("recognitionServiceLanguage", "auto")));
+        spinnerLanguage.setSelection(
+                adapterRec.getIndexByCode(sp.getString("recognitionServiceLanguage", "auto")));
         spinnerLanguage.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int i, long id) {
+            @Override public void onItemSelected(AdapterView<?> p, View v, int i, long id) {
                 sp.edit().putString("recognitionServiceLanguage", languagePairs.get(i).first).apply();
             }
-            @Override public void onNothingSelected(AdapterView<?> parent) {}
+            @Override public void onNothingSelected(AdapterView<?> p) {}
         });
 
         modeSimpleChinese = findViewById(R.id.mode_simple_chinese);
@@ -161,7 +167,6 @@ public class SettingsActivity extends AppCompatActivity {
 
     // ── Helpers ────────────────────────────────────────────────────────────────
 
-    /** Bind a SwitchCompat to a SharedPreferences boolean key with a given default. */
     private void wireSwitchCompat(int viewId, String prefKey, boolean defaultValue) {
         SwitchCompat sw = findViewById(viewId);
         if (sw == null) return;

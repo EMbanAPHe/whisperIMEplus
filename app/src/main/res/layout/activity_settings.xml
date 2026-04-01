@@ -99,16 +99,16 @@
                     android:contentDescription="@string/simple_chinese"/>
             </LinearLayout>
 
-            <!-- ═══ Voice Input Keyboard (Transcribro-style) ═══ -->
+            <!-- ═══ Listening Mode ═══ (separate section as requested) -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="20dp"
                 android:layout_marginBottom="6dp"
                 android:textSize="20dp"
-                android:text="@string/settings_voice_keyboard" />
+                android:text="@string/settings_listening_mode" />
 
-            <!-- Auto-Start Recognition -->
+            <!-- Launch in listening mode -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -125,23 +125,32 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textSize="16sp"
-                        android:text="@string/pref_auto_start_title" />
+                        android:text="@string/pref_launch_listening_title" />
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textSize="13sp"
                         android:textColor="@color/colorAccent"
-                        android:text="@string/pref_auto_start_summary" />
+                        android:text="@string/pref_launch_listening_summary" />
                 </LinearLayout>
                 <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switch_auto_start"
+                    android:id="@+id/switch_launch_listening"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
                     android:checked="true" />
             </LinearLayout>
 
-            <!-- Auto-Stop Recognition (VAD) -->
+            <!-- ═══ Streaming / Voice Keyboard Behaviour ═══ -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:layout_marginBottom="6dp"
+                android:textSize="20dp"
+                android:text="@string/settings_voice_keyboard" />
+
+            <!-- Auto-Stop Recognition (VAD streaming) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

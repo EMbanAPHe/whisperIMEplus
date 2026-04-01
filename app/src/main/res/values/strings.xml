@@ -49,10 +49,13 @@
     <string name="space_bar">Space</string>
     <string name="translate_button">Toggle translation to English</string>
     <string name="loading_model">Loading model…</string>
-    <!-- Settings -->
-    <string name="settings_voice_keyboard">Voice Input Keyboard</string>
-    <string name="pref_auto_start_title">Auto-Start Recognition</string>
-    <string name="pref_auto_start_summary">Automatically start listening when the keyboard opens</string>
+    <!-- Settings sections -->
+    <string name="settings_listening_mode">Listening Mode</string>
+    <string name="settings_voice_keyboard">Streaming Behaviour</string>
+    <!-- Listening mode toggle (new, separate section) -->
+    <string name="pref_launch_listening_title">Launch in Listening Mode</string>
+    <string name="pref_launch_listening_summary">Automatically start listening each time the keyboard opens</string>
+    <!-- Streaming / voice keyboard settings -->
     <string name="pref_auto_stop_title">Auto-Stop Recognition</string>
     <string name="pref_auto_stop_summary">Automatically stop and transcribe when speech pauses, then restart (streaming mode)</string>
     <string name="pref_auto_switch_title">Auto-Switch To Previous Input Method</string>

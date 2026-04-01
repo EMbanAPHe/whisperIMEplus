@@ -519,6 +519,23 @@ public class WhisperInputMethodService extends InputMethodService {
             @Override
             public void onResultReceived(WhisperResult whisperResult) {
                 // Runs on Whisper inference thread.
+                //
+                // ── Cancel guard — check FIRST, before committing any text ────────
+                // cancelRequested is volatile. Reading it here on the inference thread
+                // is guaranteed to see the value written by the main thread when the
+                // user pressed Cancel, even though ONNX inference cannot be interrupted
+                // mid-run. This ensures no text is ever committed after Cancel.
+                if (cancelRequested) {
+                    handler.post(() -> {
+                        audioQueue.clear();
+                        isListening = false;
+                        setMicState(MicState.IDLE);
+                        setCancelEnabled(false);
+                        resetProgressUi();
+                    });
+                    return;
+                }
+
                 handler.post(() -> resetProgressUi());
 
                 // Chinese script conversion
@@ -817,6 +834,10 @@ public class WhisperInputMethodService extends InputMethodService {
     private void loadPrefs() {
         if (sp == null) sp = PreferenceManager.getDefaultSharedPreferences(this);
         SharedPreferences.Editor ed = null;
+        if (!sp.contains(SettingsActivity.KEY_LAUNCH_LISTENING)) {
+            if (ed == null) ed = sp.edit();
+            ed.putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
+        }
         if (!sp.contains(SettingsActivity.KEY_AUTO_START)) {
             if (ed == null) ed = sp.edit();
             ed.putBoolean(SettingsActivity.KEY_AUTO_START, true);
@@ -835,9 +856,9 @@ public class WhisperInputMethodService extends InputMethodService {
         }
         if (ed != null) ed.apply();
 
-        prefAutoStart  = sp.getBoolean(SettingsActivity.KEY_AUTO_START,  true);
-        prefAutoStop   = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,   true);
-        prefAutoSwitch = sp.getBoolean(SettingsActivity.KEY_AUTO_SWITCH, false);
-        prefAutoSend   = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,   false);
+        prefAutoStart  = sp.getBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
+        prefAutoStop   = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,        true);
+        prefAutoSwitch = sp.getBoolean(SettingsActivity.KEY_AUTO_SWITCH,      false);
+        prefAutoSend   = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
     }
 }
