@@ -121,6 +121,26 @@ public class WhisperInputMethodService extends InputMethodService {
     private volatile boolean modelReady      = false;
 
     /**
+     * Session generation counter.  Incremented by startRecordingSession() and
+     * exitListeningMode().  Every callback captures the current value at the
+     * moment it is created and checks it before acting, so stale callbacks from
+     * a closed or cancelled session can never affect a subsequent session.
+     *
+     * This solves three races:
+     *  1. RecorderStopper queued for session N fires after session N+1 starts,
+     *     stopping the new recording.
+     *  2. Stale handler.post() from onResultReceived (session N) fires after
+     *     session N+1 has already set the mic to LISTENING, resetting it to IDLE.
+     *  3. cancelRequested is reset by session N+1 before session N's callbacks
+     *     have all drained from the handler queue.
+     *
+     * Accessed only on the main thread (reads in lambdas are at capture time or
+     * inside handler.post, which is main thread). Declared volatile so background
+     * threads (Recorder, Whisper) that capture it see the latest value.
+     */
+    private volatile int sessionGen = 0;
+
+    /**
      * Pipelined audio segments waiting to be transcribed.
      * Enqueued by the recorder listener, consumed by processNextQueued().
      * Accessed only on the main thread (via handler.post), so no synchronisation needed.
@@ -468,70 +488,50 @@ public class WhisperInputMethodService extends InputMethodService {
 
     private void setRecorderListener() {
         mRecorder.setListener(message -> {
-            // Called on Recorder worker thread — all UI via handler.post()
+            // Called on Recorder worker thread — all UI via handler.post().
+            // Capture sessionGen here (on the worker thread) so we can reject
+            // callbacks that belong to a session that has since been superseded.
+            final int sid = sessionGen;
 
             if (message.equals(Recorder.MSG_RECORDING)) {
-                // VAD confirmed speech — upgrade to RECORDING (bright) state
                 isRecording = true;
-                handler.post(() ->
-                        setMicState(MicState.RECORDING));
+                handler.post(() -> {
+                    if (sessionGen != sid) return;
+                    setMicState(MicState.RECORDING);
+                });
 
             } else if (message.equals(Recorder.MSG_RECORDING_DONE)) {
-                // Speech segment captured.
-                //
-                // IMPORTANT: we are on the Recorder worker thread. recordLoop()'s
-                // finally { mInProgress.set(false) } has NOT yet run — it executes
-                // after recordAudio() returns, which is after MSG_RECORDING_DONE fires.
-                // Therefore we must NOT call mRecorder.start() here directly, or
-                // recordLoop()'s finally block would reset mInProgress=false and
-                // break the next recording. We POST everything to the handler so it
-                // runs on the main thread AFTER the finally block has completed.
+                // IMPORTANT: recordLoop()'s finally { mInProgress.set(false) } has
+                // NOT yet run at this point. We must not call mRecorder.start() here
+                // directly; we POST to the handler so it runs after the finally block.
                 isRecording = false;
                 HapticFeedback.vibrate(mContext);
 
                 if (!cancelRequested) {
-                    // Snapshot the audio bytes NOW, before any new recording can
-                    // overwrite RecordBuffer. RecordBuffer.getOutputBuffer() is
-                    // synchronized so this is thread-safe.
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
 
                     handler.post(() -> {
-                        // By the time this runs on the main thread:
-                        //   • recordLoop()'s finally block has completed
-                        //   • mRecorder.mInProgress is false
-                        //   • It is safe to call mRecorder.start()
-                        if (cancelRequested) return; // check again on main thread
+                        // Reject if this session was superseded or cancelled
+                        if (sessionGen != sid || cancelRequested) return;
 
-                        // Enqueue this segment for transcription
                         audioQueue.offer(capturedAudio);
-
-                        // Start transcription of this segment immediately
                         processNextQueued();
 
                         if (continuousMode) {
-                            // Pipeline: restart recording for the NEXT segment while
-                            // Whisper processes the current one.
-                            // initVad() must be called before start() each time.
                             mRecorder.initVad();
                             mRecorder.start();
-                            // Mic shows LISTENING — waiting for next speech
                             setMicState(MicState.LISTENING);
                         } else {
-                            // Single-take: show LISTENING (dim) during processing
                             setMicState(MicState.LISTENING);
                         }
                     });
                 } else {
-                    // Cancelled — go fully idle.
-                    // NOTE: do NOT reset cancelRequested here. Whisper may still be
-                    // processing a previously buffered segment on its inference thread.
-                    // The guard in onResultReceived reads cancelRequested; clearing it
-                    // here would allow that result to be committed after cancel.
-                    // cancelRequested is only cleared in startRecordingSession() when
-                    // the user explicitly starts a new session.
+                    // Cancelled — go idle. Do NOT reset cancelRequested (Whisper
+                    // inference may still be running; its guard reads the flag).
                     isListening    = false;
                     continuousMode = false;
                     handler.post(() -> {
+                        if (sessionGen != sid) return;
                         audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
@@ -542,10 +542,10 @@ public class WhisperInputMethodService extends InputMethodService {
             } else if (message.equals(Recorder.MSG_RECORDING_ERROR)) {
                 isRecording    = false;
                 isListening    = false;
-                // Do NOT reset cancelRequested here — see MSG_RECORDING_DONE comment.
                 continuousMode = false;
                 HapticFeedback.vibrate(mContext);
                 handler.post(() -> {
+                    if (sessionGen != sid) return;
                     setMicState(MicState.IDLE);
                     setCancelEnabled(false);
                     if (tvStatus != null) {
@@ -571,13 +571,16 @@ public class WhisperInputMethodService extends InputMethodService {
             public void onResultReceived(WhisperResult whisperResult) {
                 // Runs on Whisper inference thread.
                 //
-                // ── Cancel guard — check FIRST, before committing any text ────────
-                // cancelRequested is volatile. Reading it here on the inference thread
-                // is guaranteed to see the value written by the main thread when the
-                // user pressed Cancel, even though ONNX inference cannot be interrupted
-                // mid-run. This ensures no text is ever committed after Cancel.
+                // Capture the session ID first. If exitListeningMode or
+                // startRecordingSession ran while we were doing inference,
+                // sessionGen will differ and all handler.post() calls become no-ops.
+                final int sid = sessionGen;
+
+                // Cancel guard — before committing any text.
+                // cancelRequested is volatile so this cross-thread read is safe.
                 if (cancelRequested) {
                     handler.post(() -> {
+                        if (sessionGen != sid) return;
                         audioQueue.clear();
                         isListening = false;
                         setMicState(MicState.IDLE);
@@ -587,7 +590,9 @@ public class WhisperInputMethodService extends InputMethodService {
                     return;
                 }
 
-                handler.post(() -> resetProgressUi());
+                handler.post(() -> {
+                    if (sessionGen == sid) resetProgressUi();
+                });
 
                 // Chinese script conversion
                 String result = whisperResult.getResult();
@@ -599,8 +604,6 @@ public class WhisperInputMethodService extends InputMethodService {
 
                 final String trimmed = result.trim();
                 if (!trimmed.isEmpty() && getCurrentInputConnection() != null) {
-                    // commitText is thread-safe per Android docs.
-                    // Trailing space separates consecutive utterances.
                     getCurrentInputConnection().commitText(trimmed + " ", 1);
                 }
 
@@ -620,6 +623,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 if (prefAutoSwitch && !continuousMode) {
                     isListening = false;
                     handler.post(() -> {
+                        if (sessionGen != sid) return;
                         audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
@@ -628,13 +632,10 @@ public class WhisperInputMethodService extends InputMethodService {
                     return;
                 }
 
-                // In continuous mode, recording is already running in parallel
-                // (restarted in MSG_RECORDING_DONE handler before transcription began).
-                // All we do here is process the next queued segment if one arrived
-                // while we were busy, then update the UI.
+                // Post-result state update
                 handler.post(() -> {
-                    if (cancelRequested) {
-                        // Session was cancelled while we were transcribing
+                    if (sessionGen != sid || cancelRequested) {
+                        // Session changed or cancelled while we were transcribing
                         audioQueue.clear();
                         isListening = false;
                         setMicState(MicState.IDLE);
@@ -642,16 +643,13 @@ public class WhisperInputMethodService extends InputMethodService {
                         return;
                     }
                     if (!continuousMode) {
-                        // Single-take: session ends after this result
                         isListening = false;
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
                     } else {
-                        // Drain the queue — process the next buffered segment
-                        // if one arrived while we were busy with this one.
+                        // Drain queue — process next buffered segment if one
+                        // arrived while Whisper was busy with this one.
                         processNextQueued();
-                        // If nothing queued, mic is already running (LISTENING or
-                        // RECORDING), so we just leave the state as-is.
                     }
                 });
             }
@@ -670,10 +668,13 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private void startRecordingSession(boolean useVad) {
         if (!checkRecordPermission()) return;
-        cancelRequested         = false;
-        isListening             = true;
-        continuousMode          = useVad;
+        cancelRequested = false;
+        isListening     = true;
+        continuousMode  = useVad;
+        final int sid   = ++sessionGen;   // new session — invalidates all prior callbacks
+
         handler.post(() -> {
+            if (sessionGen != sid) return; // superseded by another session
             setMicState(MicState.LISTENING);
             setCancelEnabled(true);
             if (tvStatus != null) tvStatus.setVisibility(View.GONE);
@@ -703,27 +704,30 @@ public class WhisperInputMethodService extends InputMethodService {
         continuousMode  = false;
         isListening     = false;
         isRecording     = false;
+        final int sid   = ++sessionGen;   // invalidates all callbacks from the exiting session
 
         if (mRecorder != null) {
             if (async) {
                 final Recorder r = mRecorder;
+                final int stopSid = sid;
                 if (!stopExecutor.isShutdown()) {
                     stopExecutor.execute(() -> {
-                        if (r.isInProgress()) r.stop();
+                        // Only stop if the session that triggered this exit is still
+                        // the most recent session. If a new session started in the
+                        // meantime, its recording must not be interrupted.
+                        if (sessionGen == stopSid && r.isInProgress()) r.stop();
                     });
                 } else {
-                    // Executor already shut down (e.g. called after onDestroy) —
-                    // fall back to a plain thread to avoid a crash.
-                    if (r.isInProgress()) new Thread(r::stop, "RecorderStopper").start();
+                    if (sessionGen == stopSid && r.isInProgress())
+                        new Thread(r::stop, "RecorderStopper").start();
                 }
             } else {
                 if (mRecorder.isInProgress()) mRecorder.stop();
             }
         }
 
-        // Update UI immediately — cancelRequested suppresses any pending
-        // MSG_RECORDING_DONE from triggering transcription.
         handler.post(() -> {
+            if (sessionGen != sid) return; // new session started before this ran
             audioQueue.clear();
             setMicState(MicState.IDLE);
             setCancelEnabled(false);
