@@ -133,7 +133,7 @@ public class WhisperInputMethodService extends InputMethodService {
     private boolean prefAutoSwitch;
     private boolean prefAutoSend;
 
-    // Long-press repeat runnables — stored as fields so onDestroyInputView can cancel them
+    // Long-press repeat runnables — stored as fields so onFinishInputView can cancel them
     private Runnable delInitial;
     private Runnable delFast;
     private Recorder          mRecorder;
@@ -244,18 +244,15 @@ public class WhisperInputMethodService extends InputMethodService {
         // Keyboard is hiding — stop the session asynchronously so we never
         // block the main thread waiting for the recorder to drain.
         exitListeningMode(true);
-    }
 
-    @Override
-    public void onDestroyInputView() {
-        // Cancel any pending long-press repeat Runnables before nulling btnDel
+        // Cancel any pending long-press repeat Runnables
         if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
         if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
 
         // Null out all widget references so that any handler.post() callbacks
-        // that fire between view destruction and next onCreateInputView() don't
-        // operate on a detached view hierarchy. setMicState, setCancelEnabled,
-        // and resetProgressUi all guard against null, so this is safe.
+        // that fire before the next onCreateInputView() don't operate on a
+        // detached view hierarchy. setMicState, setCancelEnabled, and
+        // resetProgressUi all guard against null, so this is safe.
         btnRecord             = null;
         btnKeyboard           = null;
         btnSettings           = null;
@@ -270,7 +267,6 @@ public class WhisperInputMethodService extends InputMethodService {
         tvStatus              = null;
         processingBar         = null;
         layoutKeyboardContent = null;
-        super.onDestroyInputView();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -392,7 +388,7 @@ public class WhisperInputMethodService extends InputMethodService {
         btnRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
 
         // ── Backspace with long-press repeat ───────────────────────────────────
-        // Uses instance-level delInitial / delFast so onDestroyInputView() can
+        // Uses instance-level delInitial / delFast so onFinishInputView() can
         // cancel them even if the view is torn down during a long-press.
         btnDel.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
