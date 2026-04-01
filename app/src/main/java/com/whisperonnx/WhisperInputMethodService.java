@@ -579,6 +579,34 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                     resetProgressUi();
                 });
+
+            } else if (message.equals(Recorder.MSG_VAD_TIMEOUT)) {
+                // 30-second VAD window elapsed with no speech detected.
+                // No audio was sent to Whisper so there is nothing to transcribe.
+                // In streaming mode: silently restart the VAD window so the user
+                // can keep speaking naturally without the keyboard appearing to freeze.
+                // In single-take mode: go idle silently (no error shown).
+                isRecording = false;
+                final boolean wasStreaming = continuousMode;
+                handler.post(() -> {
+                    if (sessionGen != sid) return;
+                    if (wasStreaming && isListening && !cancelRequested) {
+                        // Restart a fresh VAD window quietly
+                        Log.d(TAG, "VAD timeout — restarting VAD for sid=" + sid);
+                        // Stamp the same session ID so existing guards still pass
+                        activeRecordingSessionId = sid;
+                        mRecorder.initVad();
+                        mRecorder.start();
+                        // Stay in LISTENING state — no visual change needed
+                    } else {
+                        // Single-take or no longer listening
+                        isListening    = false;
+                        continuousMode = false;
+                        setMicState(MicState.IDLE);
+                        setCancelEnabled(false);
+                        resetProgressUi();
+                    }
+                });
             }
         });
     }

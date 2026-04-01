@@ -39,6 +39,12 @@ public class Recorder {
     public static final String MSG_RECORDING = "Recording...";
     public static final String MSG_RECORDING_DONE = "Recording done...!";
     public static final String MSG_RECORDING_ERROR = "Recording error...";
+    /**
+     * Fired when VAD mode times out (30 s) without detecting any speech.
+     * No audio is sent to RecordBuffer.  The IME restarts VAD silently in
+     * streaming mode, or goes idle in single-take mode.
+     */
+    public static final String MSG_VAD_TIMEOUT = "VAD timeout — no speech detected";
 
     /**
      * Maximum time (ms) that stop() will wait for the recording thread to finish
@@ -235,6 +241,7 @@ public class Recorder {
 
         boolean isSpeech;
         boolean isRecording = false;
+        boolean hadSpeech   = false;   // true once VAD detects speech at least once
         // Fixed-size ring buffer for VAD — avoids the full outputBuffer.toByteArray()
         // copy that previously happened on every iteration (creating a growing heap
         // allocation every ~30ms, causing GC pressure over long recordings).
@@ -262,6 +269,7 @@ public class Recorder {
                     if (!isRecording) {
                         Log.d(TAG, "VAD Speech detected: recording starts");
                         sendUpdate(MSG_RECORDING);
+                        hadSpeech = true;
                     }
                     isRecording = true;
                 } else {
@@ -273,9 +281,10 @@ public class Recorder {
             } else {
                 if (!isRecording) sendUpdate(MSG_RECORDING);
                 isRecording = true;
+                hadSpeech   = true;
             }
         }
-        Log.d(TAG, "Total bytes recorded: " + totalBytesRead);
+        Log.d(TAG, "Total bytes recorded: " + totalBytesRead + ", hadSpeech: " + hadSpeech);
 
         if (useVAD) {
             useVAD = false;
@@ -290,11 +299,20 @@ public class Recorder {
             audioManager.setBluetoothScoOn(false);
         }
 
-        RecordBuffer.setOutputBuffer(outputBuffer.toByteArray());
-        if (totalBytesRead > 6400) {
-            sendUpdate(MSG_RECORDING_DONE);
+        if (!hadSpeech) {
+            // The 30-second VAD window elapsed without detecting any speech.
+            // Don't write silence to RecordBuffer — that would cause Whisper to
+            // process empty audio and output "(und)" on every timeout.
+            // Fire MSG_VAD_TIMEOUT so the IME can restart VAD silently.
+            Log.d(TAG, "VAD timeout — no speech detected, skipping Whisper");
+            sendUpdate(MSG_VAD_TIMEOUT);
         } else {
-            sendUpdate(MSG_RECORDING_ERROR);
+            RecordBuffer.setOutputBuffer(outputBuffer.toByteArray());
+            if (totalBytesRead > 6400) {
+                sendUpdate(MSG_RECORDING_DONE);
+            } else {
+                sendUpdate(MSG_RECORDING_ERROR);
+            }
         }
 
         notifyStopWaiter();
