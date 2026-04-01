@@ -276,8 +276,14 @@ public class WhisperInputMethodService extends InputMethodService {
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
-        // Keyboard is hiding — stop the session asynchronously so we never
-        // block the main thread waiting for the recorder to drain.
+        // Stop any in-progress transcription FIRST so mWhisper.isInProgress()
+        // becomes false and the audio queue is cleared before the new session
+        // opens. Without this, processNextQueued() returns early when the
+        // keyboard reopens because Whisper is still busy with the old job.
+        if (mWhisper != null) stopTranscription();
+
+        // Stop recording and increment sessionGen to invalidate all pending
+        // callbacks from the closing session.
         exitListeningMode(true);
 
         // Cancel any pending long-press repeat Runnables
@@ -592,18 +598,14 @@ public class WhisperInputMethodService extends InputMethodService {
                 //   • If the keyboard was closed mid-inference, same protection.
                 final int sid = activeWhisperSessionId;
 
-                // Primary guard: session mismatch means this result is stale.
+                // Primary guard: session mismatch — this result is stale, discard it.
                 if (sessionGen != sid) {
-                    handler.post(() -> {
-                        // Only clean up if no new session has started since
-                        if (sessionGen == sid) {
-                            audioQueue.clear();
-                            isListening = false;
-                            setMicState(MicState.IDLE);
-                            setCancelEnabled(false);
-                            resetProgressUi();
-                        }
-                    });
+                    // The old inference is now done so mWhisper.isInProgress() just
+                    // became false.  Post to the main thread to drain any audio the
+                    // new session queued while Whisper was busy with this old job.
+                    // Do NOT touch isListening, mic state, or cancelRequested here —
+                    // the active session owns those fields.
+                    handler.post(() -> processNextQueued());
                     return;
                 }
 
