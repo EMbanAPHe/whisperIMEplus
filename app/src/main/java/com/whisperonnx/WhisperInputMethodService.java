@@ -146,6 +146,20 @@ public class WhisperInputMethodService extends InputMethodService {
     private volatile int activeWhisperSessionId     = 0;
 
     /**
+     * When startRecordingSession() is called but the recorder is still running
+     * from a prior session, we cannot call mRecorder.start() immediately —
+     * it would fail silently. Instead we park the intended session ID here.
+     * The RecorderStopper thread picks this up after the old recording stops
+     * and starts the new recording from the background thread's handler.post.
+     *
+     * Only written on the main thread. Read on main thread (handler.post) and
+     * the RecorderStopper executor thread (executor is single-threaded, and the
+     * read is inside handler.post, so effectively main-thread only).
+     */
+    private volatile int     pendingStartSessionId = 0;
+    private volatile boolean pendingStartVad       = false;
+
+    /**
      * Pipelined audio segments waiting to be transcribed.
      * Enqueued by the recorder listener, consumed by processNextQueued().
      * Accessed only on the main thread (via handler.post), so no synchronisation needed.
@@ -511,7 +525,7 @@ public class WhisperInputMethodService extends InputMethodService {
             if (message.equals(Recorder.MSG_RECORDING)) {
                 isRecording = true;
                 handler.post(() -> {
-                    if (activeRecordingSessionId != sid) return;
+                    if (sessionGen != sid) return;
                     setMicState(MicState.RECORDING);
                 });
 
@@ -525,7 +539,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
 
                     handler.post(() -> {
-                        if (activeRecordingSessionId != sid || cancelRequested) return;
+                        if (sessionGen != sid || cancelRequested) return;
 
                         audioQueue.offer(capturedAudio);
                         processNextQueued();
@@ -547,7 +561,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     isListening    = false;
                     continuousMode = false;
                     handler.post(() -> {
-                        if (activeRecordingSessionId != sid) return;
+                        if (sessionGen != sid) return;
                         audioQueue.clear();
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
@@ -561,7 +575,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 continuousMode = false;
                 HapticFeedback.vibrate(mContext);
                 handler.post(() -> {
-                    if (activeRecordingSessionId != sid) return;
+                    if (sessionGen != sid) return;
                     setMicState(MicState.IDLE);
                     setCancelEnabled(false);
                     if (tvStatus != null) {
@@ -702,7 +716,6 @@ public class WhisperInputMethodService extends InputMethodService {
         isListening     = true;
         continuousMode  = useVad;
         final int sid   = ++sessionGen;
-        activeRecordingSessionId = sid;   // stamp BEFORE mRecorder.start()
 
         handler.post(() -> {
             if (sessionGen != sid) return;
@@ -711,8 +724,28 @@ public class WhisperInputMethodService extends InputMethodService {
             if (tvStatus != null) tvStatus.setVisibility(View.GONE);
             resetProgressUi();
         });
-        if (useVad) mRecorder.initVad();
-        mRecorder.start();
+
+        if (mRecorder.isInProgress()) {
+            // Old recording is still running (e.g. keyboard closed mid-recording
+            // and RecorderStopper has not yet executed). We cannot call
+            // mRecorder.start() — compareAndSet would fail silently and we'd
+            // never capture any audio for this session.
+            //
+            // Park the intent: RecorderStopper will call handler.post() after
+            // the old recording stops, which will start the new recording then.
+            // activeRecordingSessionId is deliberately NOT stamped here —
+            // it will be stamped in that deferred start so MSG_RECORDING_DONE
+            // from the old recording cannot pass the session guard.
+            Log.d(TAG, "startRecordingSession: recorder busy, deferring start to sid=" + sid);
+            pendingStartSessionId = sid;
+            pendingStartVad       = useVad;
+        } else {
+            // Recorder is free — start immediately and stamp the session ID.
+            pendingStartSessionId = 0;
+            activeRecordingSessionId = sid;
+            if (useVad) mRecorder.initVad();
+            mRecorder.start();
+        }
     }
 
     /**
@@ -731,26 +764,43 @@ public class WhisperInputMethodService extends InputMethodService {
      *                        already stopped before this call).
      */
     private void exitListeningMode(boolean async) {
-        cancelRequested = true;
-        continuousMode  = false;
-        isListening     = false;
-        isRecording     = false;
-        final int sid   = ++sessionGen;   // invalidates all callbacks from the exiting session
+        cancelRequested       = true;
+        continuousMode        = false;
+        isListening           = false;
+        isRecording           = false;
+        pendingStartSessionId = 0;   // cancel any deferred start
+        final int sid         = ++sessionGen;
 
         if (mRecorder != null) {
             if (async) {
                 final Recorder r = mRecorder;
-                final int stopSid = sid;
                 if (!stopExecutor.isShutdown()) {
                     stopExecutor.execute(() -> {
-                        // Only stop if the session that triggered this exit is still
-                        // the most recent session. If a new session started in the
-                        // meantime, its recording must not be interrupted.
-                        if (sessionGen == stopSid && r.isInProgress()) r.stop();
+                        // Always stop the old recording regardless of session.
+                        // If a new session started before this runs, its
+                        // mRecorder.start() failed silently (compareAndSet returned
+                        // false). The old recording MUST be stopped so the recorder
+                        // becomes available again.  After stopping, post to the main
+                        // thread to execute any deferred session start that was
+                        // parked by startRecordingSession().
+                        if (r.isInProgress()) r.stop();
+                        handler.post(() -> {
+                            int pending = pendingStartSessionId;
+                            if (pending != 0 && !cancelRequested && isListening
+                                    && sessionGen == pending) {
+                                // A new session was started but had to defer its
+                                // mRecorder.start() because the recorder was busy.
+                                // Now the recorder is free — start it properly.
+                                pendingStartSessionId    = 0;
+                                activeRecordingSessionId = pending;
+                                if (pendingStartVad) mRecorder.initVad();
+                                mRecorder.start();
+                                Log.d(TAG, "Deferred recorder start executed for sid=" + pending);
+                            }
+                        });
                     });
                 } else {
-                    if (sessionGen == stopSid && r.isInProgress())
-                        new Thread(r::stop, "RecorderStopper").start();
+                    if (r.isInProgress()) new Thread(r::stop, "RecorderStopper").start();
                 }
             } else {
                 if (mRecorder.isInProgress()) mRecorder.stop();
@@ -758,7 +808,7 @@ public class WhisperInputMethodService extends InputMethodService {
         }
 
         handler.post(() -> {
-            if (sessionGen != sid) return; // new session started before this ran
+            if (sessionGen != sid) return;
             audioQueue.clear();
             setMicState(MicState.IDLE);
             setCancelEnabled(false);
