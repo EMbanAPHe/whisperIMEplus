@@ -270,12 +270,17 @@ public class WhisperInputMethodService extends InputMethodService {
     @Override
     public void onStartInputView(EditorInfo attribute, boolean restarting) {
         loadPrefs();
-        setWhisperListener(); // re-bind listener to current view fields
+        setWhisperListener(); // re-bind listener so callbacks reference current widget refs
+
+        // Reset visual state unconditionally on every keyboard show.
+        // onCreateInputView() is not always called on reshow — Android reuses the
+        // existing view. exitListeningMode() already cleared isListening/isRecording
+        // so restoreButtonState() correctly shows IDLE here, and the new session
+        // (startRecordingSession below) will update it to LISTENING immediately after.
+        restoreButtonState();
+        resetProgressUi();
 
         if (!modelReady) {
-            // Model is still loading — show a status message and wait.
-            // The onCreate background thread will call startRecordingSession()
-            // via handler.post() when the model becomes ready.
             if (tvStatus != null) {
                 tvStatus.setText(getString(R.string.loading_model));
                 tvStatus.setVisibility(View.VISIBLE);
@@ -290,38 +295,26 @@ public class WhisperInputMethodService extends InputMethodService {
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
-        // Stop any in-progress transcription FIRST so mWhisper.isInProgress()
-        // becomes false and the audio queue is cleared before the new session
-        // opens. Without this, processNextQueued() returns early when the
-        // keyboard reopens because Whisper is still busy with the old job.
+        // Stop transcription and recording immediately.
         if (mWhisper != null) stopTranscription();
-
-        // Stop recording and increment sessionGen to invalidate all pending
-        // callbacks from the closing session.
         exitListeningMode(true);
 
-        // Cancel any pending long-press repeat Runnables
+        // Cancel any pending long-press repeat Runnables.
         if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
         if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
 
-        // Null out all widget references so that any handler.post() callbacks
-        // that fire before the next onCreateInputView() don't operate on a
-        // detached view hierarchy. setMicState, setCancelEnabled, and
-        // resetProgressUi all guard against null, so this is safe.
-        btnRecord             = null;
-        btnKeyboard           = null;
-        btnSettings           = null;
-        btnSend               = null;
-        btnUndo               = null;
-        btnRedo               = null;
-        btnDel                = null;
-        btnEnter              = null;
-        btnCancel             = null;
-        btnClear              = null;
-        btnSpace              = null;
-        tvStatus              = null;
-        processingBar         = null;
-        layoutKeyboardContent = null;
+        // Synchronously reset the visual state NOW, while widget references are
+        // still valid. Android does NOT always call onCreateInputView() when the
+        // keyboard is reshown — it reuses the existing view. If we null the widget
+        // refs here (as we did previously), all subsequent UI updates in
+        // onStartInputView / startRecordingSession are silent no-ops, leaving the
+        // view frozen showing the old recording/processing state.
+        //
+        // Session guards in all callbacks already prevent stale updates, so there
+        // is no need to null the refs for safety.
+        setMicState(MicState.IDLE);
+        setCancelEnabled(false);
+        resetProgressUi();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
