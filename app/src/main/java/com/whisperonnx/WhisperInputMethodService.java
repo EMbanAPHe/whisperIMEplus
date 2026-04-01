@@ -476,10 +476,15 @@ public class WhisperInputMethodService extends InputMethodService {
                         }
                     });
                 } else {
-                    // Cancelled — go fully idle
-                    isListening     = false;
-                    cancelRequested = false;
-                    continuousMode  = false;
+                    // Cancelled — go fully idle.
+                    // NOTE: do NOT reset cancelRequested here. Whisper may still be
+                    // processing a previously buffered segment on its inference thread.
+                    // The guard in onResultReceived reads cancelRequested; clearing it
+                    // here would allow that result to be committed after cancel.
+                    // cancelRequested is only cleared in startRecordingSession() when
+                    // the user explicitly starts a new session.
+                    isListening    = false;
+                    continuousMode = false;
                     handler.post(() -> {
                         audioQueue.clear();
                         setMicState(MicState.IDLE);
@@ -489,10 +494,10 @@ public class WhisperInputMethodService extends InputMethodService {
                 }
 
             } else if (message.equals(Recorder.MSG_RECORDING_ERROR)) {
-                isRecording     = false;
-                isListening     = false;
-                cancelRequested = false;
-                continuousMode  = false;
+                isRecording    = false;
+                isListening    = false;
+                // Do NOT reset cancelRequested here — see MSG_RECORDING_DONE comment.
+                continuousMode = false;
                 HapticFeedback.vibrate(mContext);
                 handler.post(() -> {
                     setMicState(MicState.IDLE);
