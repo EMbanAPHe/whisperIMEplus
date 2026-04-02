@@ -1080,7 +1080,7 @@ public class WhisperInputMethodService extends InputMethodService {
         int[] ids2   = {R.id.punct_semicolon, R.id.punct_colon, R.id.punct_quote,
                          R.id.punct_apostrophe, R.id.punct_at,
                          R.id.punct_amp,        R.id.punct_slash};
-        String[] chs2 = {";", ":", """, "'", "@", "&", "/"};
+        String[] chs2 = {";", ":", String.valueOf((char)34), "'", "@", "&", "/"};
 
         for (int i = 0; i < ids1.length; i++) {
             final String ch = chs1[i];
