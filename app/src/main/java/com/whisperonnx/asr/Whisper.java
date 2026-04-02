@@ -141,6 +141,19 @@ public class Whisper {
     public void unloadModel() {
         if (processingThread != null) {
             processingThread.interrupt();
+            // Join with a generous timeout so we don't destroy the recognizer
+            // while native ONNX inference is still accessing it. The interrupt
+            // will unblock hasTask.await() immediately if the thread is idle;
+            // if inference is running, we wait for it to complete naturally
+            // (recognize() cannot be cancelled mid-run without native support).
+            try {
+                processingThread.join(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (processingThread.isAlive()) {
+                Log.w(TAG, "Processing thread did not stop within 5s — proceeding with destroy");
+            }
             processingThread = null;
         }
         if (recognizer != null) {
@@ -206,7 +219,8 @@ public class Whisper {
         try {
             if (r != null && RecordBuffer.getOutputBuffer() != null) {
                 startTime = System.currentTimeMillis();
-                sendUpdate(MSG_PROCESSING);
+                // MSG_PROCESSING is not used by the listener (onUpdateReceived is a no-op)
+                // so we skip that call entirely.
                 r.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
             } else {
                 sendUpdate("Engine not initialized or audio buffer is empty");

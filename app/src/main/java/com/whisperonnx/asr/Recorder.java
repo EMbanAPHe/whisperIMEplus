@@ -171,8 +171,9 @@ public class Recorder {
             try {
                 recordAudio();
             } catch (Exception e) {
-                Log.e(TAG, "Recording error...", e);
-                sendUpdate(e.getMessage());
+                Log.e(TAG, "Recording error in recordLoop", e);
+                sendUpdate(MSG_RECORDING_ERROR);  // must match constant, not e.getMessage()
+                notifyStopWaiter();               // unblock any stop() waiter
             } finally {
                 mInProgress.set(false);
             }
@@ -251,17 +252,14 @@ public class Recorder {
 
         while (mInProgress.get() && totalBytesRead < bytesForThirtySeconds) {
             int bytesRead = audioRecord.read(audioData, 0, VAD_FRAME_SIZE * 2);
-            if (bytesRead > 0) {
-                outputBuffer.write(audioData, 0, bytesRead);
-                totalBytesRead += bytesRead;
-            } else {
+            if (bytesRead <= 0) {
                 Log.d(TAG, "AudioRecord error, bytes read: " + bytesRead);
                 break;
             }
+            totalBytesRead += bytesRead;
 
             if (useVAD) {
-                // Copy the most recent VAD_FRAME_SIZE*2 bytes directly from audioData
-                // into vadWindow — no full outputBuffer.toByteArray() copy needed.
+                // Update the fixed VAD window with the latest frame
                 int srcLen = Math.min(bytesRead, VAD_FRAME_SIZE * 2);
                 System.arraycopy(audioData, bytesRead - srcLen, vadWindow,
                         VAD_FRAME_SIZE * 2 - srcLen, srcLen);
@@ -274,13 +272,21 @@ public class Recorder {
                         hadSpeech = true;
                     }
                     isRecording = true;
+                    // Only accumulate output AFTER speech detected — no point
+                    // buffering silence that Whisper will never process.
+                    outputBuffer.write(audioData, 0, bytesRead);
                 } else {
                     if (isRecording) {
+                        // Write the final trailing silence frame so Whisper
+                        // sees a clean end to the speech segment.
+                        outputBuffer.write(audioData, 0, bytesRead);
                         isRecording = false;
                         mInProgress.set(false);
                     }
                 }
             } else {
+                // Non-VAD mode: accumulate everything
+                outputBuffer.write(audioData, 0, bytesRead);
                 if (!isRecording) sendUpdate(MSG_RECORDING);
                 isRecording = true;
                 hadSpeech   = true;

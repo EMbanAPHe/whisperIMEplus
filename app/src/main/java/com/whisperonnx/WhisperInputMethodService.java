@@ -111,8 +111,9 @@ public class WhisperInputMethodService extends InputMethodService {
     private ProgressBar  processingBar;
     private LinearLayout layoutKeyboardContent;
 
-    // ── Static: survives onCreateInputView re-inflations ──────────────────────
-    private static boolean translate = false;
+    // translate: not static — each service instance owns its own state.
+    // volatile so startTranscription() (main thread) sees any future writes from other paths.
+    private volatile boolean translate = false;
 
     // ── Session state — volatile for cross-thread visibility ──────────────────
 
@@ -207,7 +208,6 @@ public class WhisperInputMethodService extends InputMethodService {
     private boolean punctuationVisible = false;
     /** Active keyboard options popup — null when dismissed. */
     private PopupWindow keyboardPopup    = null;
-    private Context           mContext;
     /**
      * Single-threaded executor for Recorder.stop() calls.
      * Prevents unbounded thread creation under rapid cancel/re-open cycles.
@@ -226,7 +226,6 @@ public class WhisperInputMethodService extends InputMethodService {
 
     @Override
     public void onCreate() {
-        mContext = this;
         super.onCreate();
 
         // ── Recorder: one instance for the service lifetime ────────────────────
@@ -267,8 +266,25 @@ public class WhisperInputMethodService extends InputMethodService {
         cancelRequested = true;
         continuousMode  = false;
         audioQueue.clear();
-        if (mRecorder != null && mRecorder.isInProgress()) mRecorder.stop();
-        if (mRecorder != null) mRecorder.shutdown();
+        // Stop recorder on background thread to avoid blocking main thread for up to
+        // STOP_TIMEOUT_MS (3 s), which could trigger an ANR in onDestroy().
+        if (mRecorder != null) {
+            final Recorder recRef = mRecorder;
+            if (!stopExecutor.isShutdown()) {
+                stopExecutor.execute(() -> {
+                    if (recRef.isInProgress()) recRef.stop();
+                    recRef.shutdown();
+                });
+            } else {
+                // Executor already stopped — fall back to a raw thread
+                final Thread t = new Thread(() -> {
+                    if (recRef.isInProgress()) recRef.stop();
+                    recRef.shutdown();
+                }, "RecorderDestroy");
+                t.setDaemon(true);
+                t.start();
+            }
+        }
 
         // Stop Whisper inference before releasing the model.
         if (mWhisper != null) {
@@ -467,18 +483,17 @@ public class WhisperInputMethodService extends InputMethodService {
         });
 
         // ── Delete Unselected ─────────────────────────────────────────────────
+        // Select all then delete — avoids allocating CharSequences proportional
+        // to document length (the old ExtractedText approach).
         btnClear.setOnClickListener(v -> {
             tap(v);
             if (getCurrentInputConnection() == null) return;
-            ExtractedText et = getCurrentInputConnection()
-                    .getExtractedText(new ExtractedTextRequest(), 0);
-            if (et != null && et.text != null) {
-                int len = et.text.length();
-                CharSequence before = getCurrentInputConnection().getTextBeforeCursor(len, 0);
-                CharSequence after  = getCurrentInputConnection().getTextAfterCursor(len, 0);
-                if (before != null && after != null)
-                    getCurrentInputConnection().deleteSurroundingText(before.length(), after.length());
-            }
+            getCurrentInputConnection().performContextMenuAction(android.R.id.selectAll);
+            // Small delay so selection takes effect before we delete
+            handler.postDelayed(() -> {
+                if (getCurrentInputConnection() != null)
+                    getCurrentInputConnection().commitText("", 1);
+            }, 50);
         });
 
         // ── Cut | Copy | Paste ────────────────────────────────────────────────
@@ -589,18 +604,26 @@ public class WhisperInputMethodService extends InputMethodService {
                         spaceMoved[0] = true;
                         v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                        if (getCurrentInputConnection() != null)
+                        if (getCurrentInputConnection() != null) {
+                            long st = android.os.SystemClock.uptimeMillis();
                             getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
+                                new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0));
+                            getCurrentInputConnection().sendKeyEvent(
+                                new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_RIGHT, 0));
+                        }
                     }
                     while (spaceSwipeState[2] < -SWIPE_THRESHOLD_PX) {
                         spaceSwipeState[2] += SWIPE_THRESHOLD_PX;
                         spaceMoved[0] = true;
                         v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                        if (getCurrentInputConnection() != null)
+                        if (getCurrentInputConnection() != null) {
+                            long st = android.os.SystemClock.uptimeMillis();
                             getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
+                                new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0));
+                            getCurrentInputConnection().sendKeyEvent(
+                                new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_LEFT, 0));
+                        }
                     }
                     break;
                 case MotionEvent.ACTION_UP:
@@ -687,7 +710,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 // IMPORTANT: recordLoop()'s finally { mInProgress.set(false) } has
                 // NOT yet run. POST to handler so it runs after the finally block.
                 isRecording = false;
-                HapticFeedback.vibrate(mContext);
+                HapticFeedback.vibrate(this);
 
                 if (!cancelRequested) {
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
@@ -727,7 +750,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 isRecording    = false;
                 isListening    = false;
                 continuousMode = false;
-                HapticFeedback.vibrate(mContext);
+                HapticFeedback.vibrate(this);
                 handler.post(() -> {
                     if (sessionGen != sid) return;
                     setMicState(MicState.IDLE);
@@ -989,6 +1012,20 @@ public class WhisperInputMethodService extends InputMethodService {
                         setMicState(MicState.LISTENING);
                     });
                 });
+            } else {
+                // Executor shut down (only during service teardown) — use a raw thread
+                final Thread t = new Thread(() -> {
+                    if (r.isInProgress()) r.stop();
+                    handler.post(() -> {
+                        if (sessionGen != curSid || !isListening || cancelRequested) return;
+                        activeRecordingSessionId = curSid;
+                        if (vad) mRecorder.initVad();
+                        mRecorder.start();
+                        setMicState(MicState.LISTENING);
+                    });
+                }, "RecorderStopper");
+                t.setDaemon(true);
+                t.start();
             }
         } else {
             // Recorder idle — restart directly
@@ -1020,7 +1057,7 @@ public class WhisperInputMethodService extends InputMethodService {
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
-        popup.setElevation(8f);
+        popup.setElevation(8f * getResources().getDisplayMetrics().density);
         popup.setOutsideTouchable(true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
                 android.graphics.Color.TRANSPARENT));
@@ -1063,7 +1100,7 @@ public class WhisperInputMethodService extends InputMethodService {
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
-        popup.setElevation(8f);
+        popup.setElevation(8f * getResources().getDisplayMetrics().density);
         popup.setOutsideTouchable(true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
                 android.graphics.Color.TRANSPARENT));
@@ -1272,8 +1309,8 @@ public class WhisperInputMethodService extends InputMethodService {
     }
 
     private void stopTranscription() {
-        audioQueue.clear(); // discard any buffered segments
-        handler.post(() -> resetProgressUi());
+        audioQueue.clear();     // discard any buffered segments
+        resetProgressUi();      // called on main thread — no need to post
         if (mWhisper != null) mWhisper.stop();
     }
 
@@ -1393,7 +1430,7 @@ public class WhisperInputMethodService extends InputMethodService {
     private void sendCtrlKey(int keyCode, boolean withShift) {
         if (getCurrentInputConnection() == null) return;
         int meta = KeyEvent.META_CTRL_ON | (withShift ? KeyEvent.META_SHIFT_ON : 0);
-        long t = System.currentTimeMillis();
+        long t = android.os.SystemClock.uptimeMillis();  // KeyEvent requires uptimeMillis
         getCurrentInputConnection().sendKeyEvent(
                 new KeyEvent(t, t, KeyEvent.ACTION_DOWN, keyCode, 0, meta));
         getCurrentInputConnection().sendKeyEvent(
