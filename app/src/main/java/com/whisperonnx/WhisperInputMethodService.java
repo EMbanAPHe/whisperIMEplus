@@ -122,6 +122,11 @@ public class WhisperInputMethodService extends InputMethodService {
     private volatile boolean isRecording     = false;
     /** Set before stopping the recorder to suppress post-stop transcription/restart. */
     private volatile boolean cancelRequested = false;
+    /**
+     * Set by discardAudioAndContinue() to suppress the next Whisper result without
+     * cancelling the whole session. Cleared when the next transcription starts.
+     */
+    private volatile boolean discardRequested = false;
     /** True while continuous VAD-restart loop is desired. */
     private volatile boolean continuousMode  = false;
     /** Set to true after loadModel() completes on its background thread. */
@@ -190,16 +195,12 @@ public class WhisperInputMethodService extends InputMethodService {
     private Whisper           mWhisper;
     private SharedPreferences sp;
     private final Handler     handler = new Handler(Looper.getMainLooper());
-    /** Active punctuation popup — null when dismissed. */
+    /** Active punctuation popup reference. */
     private PopupWindow punctuationPopup = null;
+    /** True while the punctuation popup is showing — more reliable than isShowing(). */
+    private boolean punctuationVisible = false;
     /** Active keyboard options popup — null when dismissed. */
     private PopupWindow keyboardPopup    = null;
-    /**
-     * Set true by the punctuation popup's dismiss listener, cleared after one
-     * handler.post cycle. Prevents the btnFullStop click (which fires AFTER the
-     * dismiss) from immediately reopening the popup that was just closed.
-     */
-    private boolean punctuationJustDismissed = false;
     private Context           mContext;
     /**
      * Single-threaded executor for Recorder.stop() calls.
@@ -328,7 +329,7 @@ public class WhisperInputMethodService extends InputMethodService {
         if (enterInitial  != null) { handler.removeCallbacks(enterInitial);  enterInitial  = null; }
         if (enterFast     != null) { handler.removeCallbacks(enterFast);     enterFast     = null; }
         // Dismiss any open popups when keyboard hides
-        if (punctuationPopup != null) { punctuationPopup.dismiss(); punctuationPopup = null; }
+        if (punctuationPopup != null) { punctuationPopup.dismiss(); punctuationPopup = null; punctuationVisible = false; }
         if (keyboardPopup    != null) { keyboardPopup.dismiss();    keyboardPopup    = null; }
 
         // Synchronously reset the visual state NOW, while widget references are
@@ -485,17 +486,16 @@ public class WhisperInputMethodService extends InputMethodService {
 
         // ── Full Stop / Punctuation toggle — tap toggles popup open/closed ──────
         // Does NOT insert a period. Press again to close popup.
-        // punctuationJustDismissed guards against the race where the popup's
+        // punctuationVisible guards against the race where the popup's
         // outside-touch dismiss fires before this click event, causing the
         // click to reopen the popup that was just closed.
         btnFullStop.setOnClickListener(v -> {
             tap(v);
-            if (punctuationJustDismissed) {
-                // Popup was just closed by this tap via outside-touch — don't reopen
-                return;
-            }
-            if (punctuationPopup != null && punctuationPopup.isShowing()) {
-                punctuationPopup.dismiss();
+            // Use punctuationVisible flag — isShowing() is unreliable for
+            // non-focusable popups shown above their anchor with negative offset.
+            if (punctuationVisible) {
+                if (punctuationPopup != null) punctuationPopup.dismiss();
+                // punctuationVisible set false by dismiss listener
             } else {
                 showPunctuationPopup(v);
             }
@@ -557,11 +557,50 @@ public class WhisperInputMethodService extends InputMethodService {
             return true;
         });
 
-        // ── Space bar ─────────────────────────────────────────────────────────
-        btnSpace.setOnClickListener(v -> {
-            tap(v);
-            if (getCurrentInputConnection() != null)
-                getCurrentInputConnection().commitText(" ", 1);
+        // ── Space bar — tap inserts space; drag left/right moves cursor ─────────
+        // Swipe sensitivity: pixels of movement per cursor step.
+        final float[] spaceSwipeState = {0f, 0f, 0f}; // [startX, lastX, totalDelta]
+        final boolean[] spaceMoved = {false};
+        final float SWIPE_THRESHOLD_PX = 40f * getResources().getDisplayMetrics().density;
+        btnSpace.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    spaceSwipeState[0] = event.getX();
+                    spaceSwipeState[1] = event.getX();
+                    spaceSwipeState[2] = 0f;
+                    spaceMoved[0] = false;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getX() - spaceSwipeState[1];
+                    spaceSwipeState[1] = event.getX();
+                    spaceSwipeState[2] += dx;
+                    // Move cursor one step per SWIPE_THRESHOLD_PX of cumulative movement
+                    while (spaceSwipeState[2] > SWIPE_THRESHOLD_PX) {
+                        spaceSwipeState[2] -= SWIPE_THRESHOLD_PX;
+                        spaceMoved[0] = true;
+                        if (getCurrentInputConnection() != null)
+                            getCurrentInputConnection().sendKeyEvent(
+                                new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
+                    }
+                    while (spaceSwipeState[2] < -SWIPE_THRESHOLD_PX) {
+                        spaceSwipeState[2] += SWIPE_THRESHOLD_PX;
+                        spaceMoved[0] = true;
+                        if (getCurrentInputConnection() != null)
+                            getCurrentInputConnection().sendKeyEvent(
+                                new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                    if (!spaceMoved[0]) {
+                        // No swipe occurred — treat as a tap
+                        tap(v);
+                        if (getCurrentInputConnection() != null)
+                            getCurrentInputConnection().commitText(" ", 1);
+                    }
+                    break;
+                default: break;
+            }
+            return true;
         });
 
         // ── Send (IME action) ──────────────────────────────────────────────────
@@ -753,7 +792,14 @@ public class WhisperInputMethodService extends InputMethodService {
                     return;
                 }
 
-                // Secondary guard: cancelled
+                // Secondary guard: discard (keep session alive, just drop this result)
+                if (discardRequested) {
+                    discardRequested = false;
+                    handler.post(() -> resetProgressUi());
+                    return;
+                }
+
+                // Tertiary guard: cancelled
                 if (cancelRequested) {
                     handler.post(() -> {
                         if (activeWhisperSessionId != sid) return;
@@ -910,6 +956,7 @@ public class WhisperInputMethodService extends InputMethodService {
     private void discardAudioAndContinue() {
         if (!isListening) return;
         audioQueue.clear();
+        discardRequested = true;    // suppress the in-flight Whisper result
         if (mWhisper != null) mWhisper.stop();
         resetProgressUi();
 
@@ -998,24 +1045,23 @@ public class WhisperInputMethodService extends InputMethodService {
         android.view.LayoutInflater inflater = android.view.LayoutInflater.from(this);
         android.view.View popupView = inflater.inflate(R.layout.popup_punctuation, null);
 
-        // NOT focusable so it doesn't auto-dismiss when items are clicked.
-        // outsideTouchable=true so touching outside the popup still dismisses it.
+        // Non-focusable so touches go through to buttons underneath.
+        // Background required for outside-touch dismissal to work.
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
         popup.setElevation(8f);
         popup.setOutsideTouchable(true);
-        // Required for setOutsideTouchable to work when focusable=false
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
                 android.graphics.Color.TRANSPARENT));
         popup.setOnDismissListener(() -> {
             punctuationPopup = null;
-            punctuationJustDismissed = true;
-            handler.post(() -> punctuationJustDismissed = false);
+            punctuationVisible = false;
         });
         punctuationPopup = popup;
+        punctuationVisible = true;
 
-        // Center popup over anchor
+        // Center popup horizontally over the anchor button
         popupView.measure(android.view.View.MeasureSpec.UNSPECIFIED,
                           android.view.View.MeasureSpec.UNSPECIFIED);
         int popupW = popupView.getMeasuredWidth();
@@ -1024,17 +1070,32 @@ public class WhisperInputMethodService extends InputMethodService {
         int yOff = -anchor.getHeight() - popupH - 8;
         popup.showAsDropDown(anchor, xOff, yOff);
 
-        // Items commit text WITHOUT dismissing — popup stays open for repeated use
-        int[] ids    = {R.id.punct_comma, R.id.punct_period, R.id.punct_exclaim,
-                        R.id.punct_question, R.id.punct_dash,
-                        R.id.punct_lparen,  R.id.punct_rparen};
-        String[] chs = {",", ".", "!", "?", "-", "(", ")"};
+        // Row 1: common punctuation — does NOT dismiss on press
+        int[] ids1   = {R.id.punct_comma, R.id.punct_period, R.id.punct_exclaim,
+                         R.id.punct_question, R.id.punct_dash,
+                         R.id.punct_lparen,   R.id.punct_rparen};
+        String[] chs1 = {",", ".", "!", "?", "-", "(", ")"};
 
-        for (int i = 0; i < ids.length; i++) {
-            final String ch = chs[i];
-            popupView.findViewById(ids[i]).setOnClickListener(v -> {
+        // Row 2: symbols
+        int[] ids2   = {R.id.punct_semicolon, R.id.punct_colon, R.id.punct_quote,
+                         R.id.punct_apostrophe, R.id.punct_at,
+                         R.id.punct_amp,        R.id.punct_slash};
+        String[] chs2 = {";", ":", """, "'", "@", "&", "/"};
+
+        for (int i = 0; i < ids1.length; i++) {
+            final String ch = chs1[i];
+            android.view.View btn = popupView.findViewById(ids1[i]);
+            if (btn != null) btn.setOnClickListener(v -> {
                 tap(v);
-                // Do NOT dismiss — user can tap multiple times
+                if (getCurrentInputConnection() != null)
+                    getCurrentInputConnection().commitText(ch, 1);
+            });
+        }
+        for (int i = 0; i < ids2.length; i++) {
+            final String ch = chs2[i];
+            android.view.View btn = popupView.findViewById(ids2[i]);
+            if (btn != null) btn.setOnClickListener(v -> {
+                tap(v);
                 if (getCurrentInputConnection() != null)
                     getCurrentInputConnection().commitText(ch, 1);
             });
@@ -1172,6 +1233,7 @@ public class WhisperInputMethodService extends InputMethodService {
         RecordBuffer.setOutputBuffer(audioBytes);
         mWhisper.setAction(translate ? ACTION_TRANSLATE : ACTION_TRANSCRIBE);
         mWhisper.setLanguage(sp != null ? sp.getString("language", "auto") : "auto");
+        discardRequested = false;             // clear any pending discard
         activeWhisperSessionId = sessionGen;  // stamp BEFORE mWhisper.start()
         Log.d(TAG, "startTranscription: " + audioBytes.length + " bytes, translate=" + translate
                 + " session=" + activeWhisperSessionId);
