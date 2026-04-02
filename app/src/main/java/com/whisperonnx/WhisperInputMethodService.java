@@ -939,8 +939,7 @@ public class WhisperInputMethodService extends InputMethodService {
         android.view.View popupView = inflater.inflate(R.layout.popup_keyboard_options, null);
 
         android.widget.TextView tvStreaming = popupView.findViewById(R.id.popup_streaming);
-        tvStreaming.setText("Streaming
-" + (prefAutoStop ? "ON ✓" : "OFF"));
+        tvStreaming.setText("Streaming\n" + (prefAutoStop ? "ON v" : "OFF"));
 
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,

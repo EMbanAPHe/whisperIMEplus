@@ -58,7 +58,6 @@
     <string name="copy">Copy</string>
     <string name="paste">Paste</string>
     <string name="full_stop">.</string>
-    <string name="full_stop_toggle">.,?!</string>
     <string name="forward_delete">Del\n⌦</string>
 
     <!-- Settings sections -->

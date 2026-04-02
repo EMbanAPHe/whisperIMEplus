@@ -1,11 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Keyboard button long-press popup.
-  Three options side by side:
-    Left  — Toggle Streaming mode
-    Center — Switch to previous keyboard (default, highlighted)
-    Right  — Open Settings
--->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
@@ -17,7 +10,7 @@
         android:id="@+id/popup_streaming"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:minWidth="80dp"
+        android:minWidth="88dp"
         android:padding="10dp"
         android:gravity="center"
         android:textColor="#FFFFFF"
@@ -30,27 +23,10 @@
     <Space android:layout_width="4dp" android:layout_height="match_parent" />
 
     <TextView
-        android:id="@+id/popup_keyboard"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:minWidth="80dp"
-        android:padding="10dp"
-        android:gravity="center"
-        android:textColor="#FFFFFF"
-        android:textSize="13sp"
-        android:textStyle="bold"
-        android:text="⌨ Keyboard"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="@drawable/popup_option_center" />
-
-    <Space android:layout_width="4dp" android:layout_height="match_parent" />
-
-    <TextView
         android:id="@+id/popup_settings"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:minWidth="80dp"
+        android:minWidth="88dp"
         android:padding="10dp"
         android:gravity="center"
         android:textColor="#FFFFFF"

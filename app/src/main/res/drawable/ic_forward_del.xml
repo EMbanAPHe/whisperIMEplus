@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Right-pointing badge (mirror of backspace) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M2,3H17L22,12L17,21H2V3Z" />
+    <!-- X cross inside the badge -->
+    <path
+        android:strokeColor="#2D2D3A"
+        android:strokeWidth="2"
+        android:pathData="M9,9L15,15" />
+    <path
+        android:strokeColor="#2D2D3A"
+        android:strokeWidth="2"
+        android:pathData="M15,9L9,15" />
+</vector>
