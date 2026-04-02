@@ -483,25 +483,21 @@ public class WhisperInputMethodService extends InputMethodService {
         });
 
         // ── Delete Unselected ─────────────────────────────────────────────────
-        // Deletes all text EXCEPT the current selection. Uses selectionStart/End
-        // from ExtractedText so it never touches the selected region.
+        // Keeps only the selected text; deletes everything else.
+        // Uses getTextBeforeCursor/getTextAfterCursor — the Android contract
+        // guarantees these return text OUTSIDE the selection, so deleteSurrounding
+        // Text(before.length(), after.length()) can never touch the selected region.
         btnClear.setOnClickListener(v -> {
             tap(v);
             if (getCurrentInputConnection() == null) return;
-            ExtractedText et = getCurrentInputConnection()
-                    .getExtractedText(new ExtractedTextRequest(), 0);
-            if (et == null || et.text == null) return;
-            int selStart = et.selectionStart;
-            int selEnd   = et.selectionEnd;
-            int textLen  = et.text.length();
-            // Delete after selection first (so offsets remain valid for before-delete)
-            if (selEnd < textLen) {
-                getCurrentInputConnection().deleteSurroundingText(0, textLen - selEnd);
-            }
-            // Now delete before selection
-            if (selStart > 0) {
-                getCurrentInputConnection().deleteSurroundingText(selStart, 0);
-            }
+            CharSequence before = getCurrentInputConnection()
+                    .getTextBeforeCursor(Integer.MAX_VALUE, 0);
+            CharSequence after  = getCurrentInputConnection()
+                    .getTextAfterCursor(Integer.MAX_VALUE, 0);
+            if (before == null) before = "";
+            if (after  == null) after  = "";
+            getCurrentInputConnection()
+                    .deleteSurroundingText(before.length(), after.length());
         });
 
         // ── Cut | Copy | Paste ────────────────────────────────────────────────

@@ -101,8 +101,10 @@ public class Recorder {
 
     public void initVad() {
         int silenceDurationMs = sp.getInt("silenceDurationMs", 1000);
-        int speechDurationMs  = sp.getInt("vadSpeechDurationMs", 200);
-        int modeIndex         = sp.getInt("vadMode", 2); // 0=Normal 1=Aggressive 2=VeryAggressive
+        // speechDurationMs is fixed at 50ms (1-2 frames) — configuring it via
+        // settings caused word clipping even at minimum values, because the VAD
+        // must hear that many ms of speech before confirming. 50ms is imperceptible.
+        int modeIndex = sp.getInt("vadMode", 2); // 0=Normal 1=Aggressive 2=VeryAggressive
         Mode vadMode = modeIndex == 0 ? Mode.NORMAL
                      : modeIndex == 1 ? Mode.AGGRESSIVE
                      : Mode.VERY_AGGRESSIVE;
@@ -111,15 +113,14 @@ public class Recorder {
                 .setFrameSize(FrameSize.FRAME_SIZE_480)
                 .setMode(vadMode)
                 .setSilenceDurationMs(silenceDurationMs)
-                .setSpeechDurationMs(speechDurationMs)
+                .setSpeechDurationMs(50)
                 .build();
-        // Amplitude gate: frames with RMS below this value are treated as silence
-        // before being passed to WebRTC VAD. This blocks haptic feedback vibrations,
-        // button click sounds, and quiet ambient noise from triggering recording.
-        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 500);
+        // Amplitude gate: RMS threshold applied only BEFORE speech is detected.
+        // Blocks haptic feedback vibrations, button taps, and quiet ambient noise
+        // from triggering recording. Does NOT affect mid-speech frames.
+        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 800);
         useVAD = true;
         Log.d(TAG, "VAD initialized: silenceMs=" + silenceDurationMs
-                + " speechMs=" + speechDurationMs
                 + " mode=" + vadMode + " ampThreshold=" + vadAmplitudeThreshold);
     }
 
@@ -274,11 +275,13 @@ public class Recorder {
                 System.arraycopy(audioData, bytesRead - srcLen, vadWindow,
                         VAD_FRAME_SIZE * 2 - srcLen, srcLen);
 
-                // Pre-gate: calculate RMS of current frame. Only pass to VAD if
-                // energy exceeds threshold. This filters haptic vibrations and
-                // ambient taps that WebRTC VAD would otherwise misclassify as speech.
-                isSpeech = (rmsOf(audioData, bytesRead) >= vadAmplitudeThreshold)
-                        && vad.isSpeech(vadWindow);
+                // Pre-gate: only apply amplitude threshold BEFORE speech starts.
+                // Once recording is active (isRecording=true) we let VAD handle
+                // silence detection normally. Gating mid-speech would drop low-
+                // amplitude fricatives ('s','f','h') causing cut-in/out and (und).
+                boolean loudEnough = isRecording
+                        || (rmsOf(audioData, bytesRead) >= vadAmplitudeThreshold);
+                isSpeech = loudEnough && vad.isSpeech(vadWindow);
                 if (isSpeech) {
                     if (!isRecording) {
                         Log.d(TAG, "VAD Speech detected: recording starts");
