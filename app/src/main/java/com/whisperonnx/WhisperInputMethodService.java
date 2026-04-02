@@ -190,10 +190,16 @@ public class WhisperInputMethodService extends InputMethodService {
     private Whisper           mWhisper;
     private SharedPreferences sp;
     private final Handler     handler = new Handler(Looper.getMainLooper());
-    /** Active punctuation popup — null when dismissed. Tracks toggle state. */
+    /** Active punctuation popup — null when dismissed. */
     private PopupWindow punctuationPopup = null;
     /** Active keyboard options popup — null when dismissed. */
     private PopupWindow keyboardPopup    = null;
+    /**
+     * Set true by the punctuation popup's dismiss listener, cleared after one
+     * handler.post cycle. Prevents the btnFullStop click (which fires AFTER the
+     * dismiss) from immediately reopening the popup that was just closed.
+     */
+    private boolean punctuationJustDismissed = false;
     private Context           mContext;
     /**
      * Single-threaded executor for Recorder.stop() calls.
@@ -479,10 +485,17 @@ public class WhisperInputMethodService extends InputMethodService {
 
         // ── Full Stop / Punctuation toggle — tap toggles popup open/closed ──────
         // Does NOT insert a period. Press again to close popup.
+        // punctuationJustDismissed guards against the race where the popup's
+        // outside-touch dismiss fires before this click event, causing the
+        // click to reopen the popup that was just closed.
         btnFullStop.setOnClickListener(v -> {
             tap(v);
+            if (punctuationJustDismissed) {
+                // Popup was just closed by this tap via outside-touch — don't reopen
+                return;
+            }
             if (punctuationPopup != null && punctuationPopup.isShowing()) {
-                punctuationPopup.dismiss(); // listener sets field to null
+                punctuationPopup.dismiss();
             } else {
                 showPunctuationPopup(v);
             }
@@ -939,13 +952,18 @@ public class WhisperInputMethodService extends InputMethodService {
         android.view.View popupView = inflater.inflate(R.layout.popup_keyboard_options, null);
 
         android.widget.TextView tvStreaming = popupView.findViewById(R.id.popup_streaming);
-        tvStreaming.setText("Streaming\n" + (prefAutoStop ? "ON v" : "OFF"));
+        tvStreaming.setText("Streaming\n" + (prefAutoStop ? "[ON]" : "[OFF]"));
 
+        // focusable=false so that tapping buttons behind/around the popup still works.
+        // The keyboard button press will dismiss the popup via dismiss() call AND
+        // execute the switch. setBackgroundDrawable is needed for outside-touch to work.
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
         popup.setElevation(8f);
         popup.setOutsideTouchable(true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                android.graphics.Color.TRANSPARENT));
         popup.setOnDismissListener(() -> keyboardPopup = null);
         keyboardPopup = popup;
 
@@ -990,7 +1008,11 @@ public class WhisperInputMethodService extends InputMethodService {
         // Required for setOutsideTouchable to work when focusable=false
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
                 android.graphics.Color.TRANSPARENT));
-        popup.setOnDismissListener(() -> punctuationPopup = null);
+        popup.setOnDismissListener(() -> {
+            punctuationPopup = null;
+            punctuationJustDismissed = true;
+            handler.post(() -> punctuationJustDismissed = false);
+        });
         punctuationPopup = popup;
 
         // Center popup over anchor

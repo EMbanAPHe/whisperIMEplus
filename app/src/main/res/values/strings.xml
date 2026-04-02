@@ -43,7 +43,7 @@
 
     <!-- IME keyboard strings -->
     <string name="cancel_recognition">Cancel\nRecognition</string>
-    <string name="delete_unselected">Del\nUnselected</string>
+    <string name="delete_unselected">Delete\nUnselected</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="send">Send</string>
