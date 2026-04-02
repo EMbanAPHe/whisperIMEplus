@@ -608,6 +608,9 @@ public class WhisperInputMethodService extends InputMethodService {
                         spaceMoved[0] = true;
                         v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                        // Suppress VAD for 250ms after each haptic — CLOCK_TICK
+                        // vibrations couple through the chassis into the mic.
+                        if (mRecorder != null) mRecorder.suppressVadTrigger(250);
                         if (getCurrentInputConnection() != null) {
                             long st = android.os.SystemClock.uptimeMillis();
                             getCurrentInputConnection().sendKeyEvent(
@@ -621,6 +624,8 @@ public class WhisperInputMethodService extends InputMethodService {
                         spaceMoved[0] = true;
                         v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                        // Suppress VAD for 250ms after each haptic
+                        if (mRecorder != null) mRecorder.suppressVadTrigger(250);
                         if (getCurrentInputConnection() != null) {
                             long st = android.os.SystemClock.uptimeMillis();
                             getCurrentInputConnection().sendKeyEvent(

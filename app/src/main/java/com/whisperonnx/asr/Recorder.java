@@ -67,6 +67,13 @@ public class Recorder {
     private volatile boolean shouldStartRecording = false;
     private volatile boolean useVAD = false;  // volatile: written on main, read on worker
     private volatile int vadAmplitudeThreshold = 500; // RMS below this = silence pre-gate
+    /**
+     * When set to a future uptime timestamp, the VAD amplitude gate is raised
+     * very high until that time. Call suppressVadTrigger() from the IME to blank
+     * the gate during spacebar swipe haptics, which couple through the chassis
+     * into the microphone and would otherwise trigger recording.
+     */
+    private volatile long vadSuppressedUntil = 0L;
     private VadWebRTC vad = null;
     private static final int VAD_FRAME_SIZE = 480;
     private SharedPreferences sp;
@@ -97,6 +104,16 @@ public class Recorder {
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * Suppresses the VAD amplitude gate for the given duration (ms) starting now.
+     * Safe to call from any thread — field is volatile.
+     * Typical use: call with 250ms each time a cursor-movement haptic fires during
+     * a spacebar swipe, so the vibration picked up by the mic doesn't start recording.
+     */
+    public void suppressVadTrigger(int durationMs) {
+        vadSuppressedUntil = android.os.SystemClock.uptimeMillis() + durationMs;
     }
 
     public void initVad() {
@@ -276,11 +293,18 @@ public class Recorder {
                         VAD_FRAME_SIZE * 2 - srcLen, srcLen);
 
                 // Pre-gate: only apply amplitude threshold BEFORE speech starts.
-                // Once recording is active (isRecording=true) we let VAD handle
-                // silence detection normally. Gating mid-speech would drop low-
-                // amplitude fricatives ('s','f','h') causing cut-in/out and (und).
+                // Once recording is active (isRecording=true) let VAD handle silence
+                // detection normally — gating mid-speech drops fricatives ('s','f','h').
+                //
+                // vadSuppressedUntil: temporarily raises the effective threshold to
+                // Integer.MAX_VALUE during spacebar cursor-swipe haptics. CLOCK_TICK
+                // vibrations couple through the phone chassis into the mic at ~200-500
+                // RMS — within range of the normal threshold. Suppression window blanks
+                // the gate for ~250 ms per cursor step so haptics never start recording.
+                boolean vadSuppressed = !isRecording
+                        && (android.os.SystemClock.uptimeMillis() < vadSuppressedUntil);
                 boolean loudEnough = isRecording
-                        || (rmsOf(audioData, bytesRead) >= vadAmplitudeThreshold);
+                        || (!vadSuppressed && rmsOf(audioData, bytesRead) >= vadAmplitudeThreshold);
                 isSpeech = loudEnough && vad.isSpeech(vadWindow);
                 if (isSpeech) {
                     if (!isRecording) {
