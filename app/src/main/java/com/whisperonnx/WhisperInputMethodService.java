@@ -587,6 +587,8 @@ public class WhisperInputMethodService extends InputMethodService {
                     while (spaceSwipeState[2] > SWIPE_THRESHOLD_PX) {
                         spaceSwipeState[2] -= SWIPE_THRESHOLD_PX;
                         spaceMoved[0] = true;
+                        v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP,
+                                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                         if (getCurrentInputConnection() != null)
                             getCurrentInputConnection().sendKeyEvent(
                                 new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
@@ -594,6 +596,8 @@ public class WhisperInputMethodService extends InputMethodService {
                     while (spaceSwipeState[2] < -SWIPE_THRESHOLD_PX) {
                         spaceSwipeState[2] += SWIPE_THRESHOLD_PX;
                         spaceMoved[0] = true;
+                        v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP,
+                                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                         if (getCurrentInputConnection() != null)
                             getCurrentInputConnection().sendKeyEvent(
                                 new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));

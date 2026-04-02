@@ -184,8 +184,8 @@
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_send_36dp"
                     android:contentDescription="@string/send"
-                    android:scaleType="centerInside" 
-                    android:padding="8dp" />
+                    android:scaleType="centerInside"
+                    android:padding="9dp" />
 
             </LinearLayout>
 
@@ -265,8 +265,8 @@
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_undo_36dp"
                     android:contentDescription="@string/undo"
-                    android:scaleType="centerInside" 
-                    android:padding="8dp" />
+                    android:scaleType="centerInside"
+                    android:padding="9dp" />
 
                 <ImageButton
                     android:id="@+id/btnRedo"
@@ -276,8 +276,8 @@
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_redo_36dp"
                     android:contentDescription="@string/redo"
-                    android:scaleType="centerInside" 
-                    android:padding="8dp" />
+                    android:scaleType="centerInside"
+                    android:padding="9dp" />
 
             </LinearLayout>
 

@@ -47,7 +47,7 @@
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="send">Send</string>
-    <string name="space_bar">Space</string>
+    <string name="space_bar">␣</string>
     <string name="translate_button">Toggle translation to English</string>
     <string name="loading_model">Loading model…</string>
 
