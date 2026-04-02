@@ -7,91 +7,91 @@
     android:background="@drawable/popup_background"
     android:padding="4dp">
 
-    <!-- Row 1: common sentence punctuation -->
+    <!-- Row 1: symbols (formerly row 2) — now on top -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal">
 
-        <TextView android:id="@+id/punct_comma"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="," android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_semicolon"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text=";" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_period"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="." android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_colon"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text=":" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_exclaim"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="!" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_quote"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="&quot;" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_question"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="?" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_apostrophe"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="'" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_dash"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="-" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_at"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="@" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_lparen"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="(" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_amp"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="&amp;" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_rparen"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text=")" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_slash"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="/" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
 
     </LinearLayout>
 
-    <!-- Row 2: symbols and extras -->
+    <!-- Row 2: common sentence punctuation (formerly row 1) — now on bottom -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:orientation="horizontal">
 
-        <TextView android:id="@+id/punct_semicolon"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text=";" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_comma"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="," android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_colon"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text=":" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_period"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="." android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_quote"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="&quot;" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_exclaim"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="!" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_apostrophe"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="'" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_question"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="?" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_at"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="@" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_dash"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="-" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_amp"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="&amp;" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_lparen"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text="(" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
-        <TextView android:id="@+id/punct_slash"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp"
-            android:text="/" android:clickable="true" android:focusable="true"
+        <TextView android:id="@+id/punct_rparen"
+            android:layout_width="46dp" android:layout_height="46dp"
+            android:gravity="center" android:textColor="#FFFFFF" android:textSize="20sp"
+            android:text=")" android:clickable="true" android:focusable="true"
             android:background="@drawable/rounded_button_tonal" android:layout_margin="2dp"/>
 
     </LinearLayout>

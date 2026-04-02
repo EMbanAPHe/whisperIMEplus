@@ -197,7 +197,13 @@ public class WhisperInputMethodService extends InputMethodService {
     private final Handler     handler = new Handler(Looper.getMainLooper());
     /** Active punctuation popup reference. */
     private PopupWindow punctuationPopup = null;
-    /** True while the punctuation popup is showing — more reliable than isShowing(). */
+    /** Uptime (ms) when the punctuation popup was last dismissed.
+     * Used to suppress the click that dismissed it from immediately reopening it.
+     * The dismiss fires during ACTION_DOWN; the click fires during ACTION_UP.
+     * If the click arrives within 400ms of dismissal, it is ignored.
+     */
+    private long punctuationDismissedAt = 0L;
+    /** True while the punctuation popup is intentionally showing. */
     private boolean punctuationVisible = false;
     /** Active keyboard options popup — null when dismissed. */
     private PopupWindow keyboardPopup    = null;
@@ -491,12 +497,15 @@ public class WhisperInputMethodService extends InputMethodService {
         // click to reopen the popup that was just closed.
         btnFullStop.setOnClickListener(v -> {
             tap(v);
-            // Use punctuationVisible flag — isShowing() is unreliable for
-            // non-focusable popups shown above their anchor with negative offset.
             if (punctuationVisible) {
+                // Popup is explicitly open — user tapped the button to close it
                 if (punctuationPopup != null) punctuationPopup.dismiss();
-                // punctuationVisible set false by dismiss listener
-            } else {
+            } else if (android.os.SystemClock.uptimeMillis() - punctuationDismissedAt > 400) {
+                // Only open if the popup was not *just* dismissed.
+                // When the popup is open and the user taps the button, the popup's
+                // outside-touch handler fires during ACTION_DOWN (sets dismiss time,
+                // sets punctuationVisible=false), then the click fires during ACTION_UP.
+                // The 400ms window ensures that click does not reopen the popup.
                 showPunctuationPopup(v);
             }
         });
@@ -561,7 +570,7 @@ public class WhisperInputMethodService extends InputMethodService {
         // Swipe sensitivity: pixels of movement per cursor step.
         final float[] spaceSwipeState = {0f, 0f, 0f}; // [startX, lastX, totalDelta]
         final boolean[] spaceMoved = {false};
-        final float SWIPE_THRESHOLD_PX = 40f * getResources().getDisplayMetrics().density;
+        final float SWIPE_THRESHOLD_PX = 16f * getResources().getDisplayMetrics().density;
         btnSpace.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
@@ -1057,6 +1066,7 @@ public class WhisperInputMethodService extends InputMethodService {
         popup.setOnDismissListener(() -> {
             punctuationPopup = null;
             punctuationVisible = false;
+            punctuationDismissedAt = android.os.SystemClock.uptimeMillis();
         });
         punctuationPopup = popup;
         punctuationVisible = true;
