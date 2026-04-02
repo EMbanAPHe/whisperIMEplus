@@ -52,6 +52,7 @@ public class SettingsActivity extends AppCompatActivity {
     private CheckBox modeSimpleChineseIME;
     private RangeSlider minSilence;
     private RangeSlider speechDuration;
+    private RangeSlider amplitudeThreshold;
     private int langSelected;
 
     @SuppressLint("ClickableViewAccessibility")
@@ -169,6 +170,11 @@ public class SettingsActivity extends AppCompatActivity {
         speechDuration.setValues((float) sp.getInt(KEY_VAD_SPEECH_MS, 200));
         speechDuration.addOnChangeListener((@NonNull RangeSlider slider, float value, boolean fromUser) ->
                 sp.edit().putInt(KEY_VAD_SPEECH_MS, (int) value).apply());
+
+        amplitudeThreshold = findViewById(R.id.settings_amplitude_threshold);
+        amplitudeThreshold.setValues((float) sp.getInt("vadAmplitudeThreshold", 500));
+        amplitudeThreshold.addOnChangeListener((@NonNull RangeSlider slider, float value, boolean fromUser) ->
+                sp.edit().putInt("vadAmplitudeThreshold", (int) value).apply());
 
         checkPermissions();
     }

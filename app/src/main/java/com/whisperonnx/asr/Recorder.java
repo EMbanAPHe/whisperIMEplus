@@ -66,6 +66,7 @@ public class Recorder {
 
     private volatile boolean shouldStartRecording = false;
     private volatile boolean useVAD = false;  // volatile: written on main, read on worker
+    private volatile int vadAmplitudeThreshold = 500; // RMS below this = silence pre-gate
     private VadWebRTC vad = null;
     private static final int VAD_FRAME_SIZE = 480;
     private SharedPreferences sp;
@@ -101,16 +102,25 @@ public class Recorder {
     public void initVad() {
         int silenceDurationMs = sp.getInt("silenceDurationMs", 1000);
         int speechDurationMs  = sp.getInt("vadSpeechDurationMs", 200);
+        int modeIndex         = sp.getInt("vadMode", 2); // 0=Normal 1=Aggressive 2=VeryAggressive
+        Mode vadMode = modeIndex == 0 ? Mode.NORMAL
+                     : modeIndex == 1 ? Mode.AGGRESSIVE
+                     : Mode.VERY_AGGRESSIVE;
         vad = Vad.builder()
                 .setSampleRate(SampleRate.SAMPLE_RATE_16K)
                 .setFrameSize(FrameSize.FRAME_SIZE_480)
-                .setMode(Mode.VERY_AGGRESSIVE)
+                .setMode(vadMode)
                 .setSilenceDurationMs(silenceDurationMs)
                 .setSpeechDurationMs(speechDurationMs)
                 .build();
+        // Amplitude gate: frames with RMS below this value are treated as silence
+        // before being passed to WebRTC VAD. This blocks haptic feedback vibrations,
+        // button click sounds, and quiet ambient noise from triggering recording.
+        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 500);
         useVAD = true;
         Log.d(TAG, "VAD initialized: silenceMs=" + silenceDurationMs
-                + " speechMs=" + speechDurationMs);
+                + " speechMs=" + speechDurationMs
+                + " mode=" + vadMode + " ampThreshold=" + vadAmplitudeThreshold);
     }
 
     /**
@@ -264,7 +274,11 @@ public class Recorder {
                 System.arraycopy(audioData, bytesRead - srcLen, vadWindow,
                         VAD_FRAME_SIZE * 2 - srcLen, srcLen);
 
-                isSpeech = vad.isSpeech(vadWindow);
+                // Pre-gate: calculate RMS of current frame. Only pass to VAD if
+                // energy exceeds threshold. This filters haptic vibrations and
+                // ambient taps that WebRTC VAD would otherwise misclassify as speech.
+                isSpeech = (rmsOf(audioData, bytesRead) >= vadAmplitudeThreshold)
+                        && vad.isSpeech(vadWindow);
                 if (isSpeech) {
                     if (!isRecording) {
                         Log.d(TAG, "VAD Speech detected: recording starts");
@@ -324,6 +338,22 @@ public class Recorder {
         }
 
         notifyStopWaiter();
+    }
+
+    /**
+     * Returns the RMS (root mean square) amplitude of a PCM-16 audio frame.
+     * Values range 0–32767. Typical speech is 1000–8000; haptic vibrations
+     * picked up by the mic are typically 100–800; silence is 0–200.
+     */
+    private static int rmsOf(byte[] pcm16, int length) {
+        if (length < 2) return 0;
+        long sumSq = 0;
+        int samples = length / 2;
+        for (int i = 0; i < length - 1; i += 2) {
+            short s = (short) ((pcm16[i + 1] << 8) | (pcm16[i] & 0xFF));
+            sumSq += (long) s * s;
+        }
+        return (int) Math.sqrt((double) sumSq / samples);
     }
 
     /** Wakes any thread blocked in stop()'s timed wait. */

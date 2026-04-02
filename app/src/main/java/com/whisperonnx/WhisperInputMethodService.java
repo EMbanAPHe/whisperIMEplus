@@ -483,17 +483,25 @@ public class WhisperInputMethodService extends InputMethodService {
         });
 
         // ── Delete Unselected ─────────────────────────────────────────────────
-        // Select all then delete — avoids allocating CharSequences proportional
-        // to document length (the old ExtractedText approach).
+        // Deletes all text EXCEPT the current selection. Uses selectionStart/End
+        // from ExtractedText so it never touches the selected region.
         btnClear.setOnClickListener(v -> {
             tap(v);
             if (getCurrentInputConnection() == null) return;
-            getCurrentInputConnection().performContextMenuAction(android.R.id.selectAll);
-            // Small delay so selection takes effect before we delete
-            handler.postDelayed(() -> {
-                if (getCurrentInputConnection() != null)
-                    getCurrentInputConnection().commitText("", 1);
-            }, 50);
+            ExtractedText et = getCurrentInputConnection()
+                    .getExtractedText(new ExtractedTextRequest(), 0);
+            if (et == null || et.text == null) return;
+            int selStart = et.selectionStart;
+            int selEnd   = et.selectionEnd;
+            int textLen  = et.text.length();
+            // Delete after selection first (so offsets remain valid for before-delete)
+            if (selEnd < textLen) {
+                getCurrentInputConnection().deleteSurroundingText(0, textLen - selEnd);
+            }
+            // Now delete before selection
+            if (selStart > 0) {
+                getCurrentInputConnection().deleteSurroundingText(selStart, 0);
+            }
         });
 
         // ── Cut | Copy | Paste ────────────────────────────────────────────────
