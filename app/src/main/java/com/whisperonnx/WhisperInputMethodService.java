@@ -101,12 +101,12 @@ public class WhisperInputMethodService extends InputMethodService {
     private View         btnClear;     // Delete Unselected — TextView
     private View         btnSpace;     // TextView
     private View         btnDiscard;   // Discard Audio — TextView
-    private View         btnSelectAll; // Select All — TextView
-    private View         btnCut;       // Cut — TextView
-    private View         btnCopy;      // Copy — TextView
-    private View         btnPaste;     // Paste — TextView
+    private ImageButton  btnSelectAll; // Select All — icon button
+    private ImageButton  btnCut;       // Cut — icon button
+    private ImageButton  btnCopy;      // Copy — icon button
+    private ImageButton  btnPaste;     // Paste — icon button
     private View         btnFullStop;  // Full Stop — TextView (long press = punctuation popup)
-    private View         btnForwardDel; // Forward Delete — TextView
+    private ImageButton  btnForwardDel; // Forward Delete — icon button
     private TextView     tvStatus;
     private ProgressBar  processingBar;
     private LinearLayout layoutKeyboardContent;
@@ -182,12 +182,18 @@ public class WhisperInputMethodService extends InputMethodService {
     // Long-press repeat runnables — stored as fields so onFinishInputView can cancel them
     private Runnable delInitial;
     private Runnable delFast;
+    private Runnable fwdDelInitial;
+    private Runnable fwdDelFast;
     private Runnable enterInitial;
     private Runnable enterFast;
     private Recorder          mRecorder;
     private Whisper           mWhisper;
     private SharedPreferences sp;
     private final Handler     handler = new Handler(Looper.getMainLooper());
+    /** Active punctuation popup — null when dismissed. Tracks toggle state. */
+    private PopupWindow punctuationPopup = null;
+    /** Active keyboard options popup — null when dismissed. */
+    private PopupWindow keyboardPopup    = null;
     private Context           mContext;
     /**
      * Single-threaded executor for Recorder.stop() calls.
@@ -309,10 +315,15 @@ public class WhisperInputMethodService extends InputMethodService {
         exitListeningMode(true);
 
         // Cancel any pending long-press repeat Runnables.
-        if (delInitial   != null) { handler.removeCallbacks(delInitial);   delInitial   = null; }
-        if (delFast      != null) { handler.removeCallbacks(delFast);      delFast      = null; }
-        if (enterInitial != null) { handler.removeCallbacks(enterInitial); enterInitial = null; }
-        if (enterFast    != null) { handler.removeCallbacks(enterFast);    enterFast    = null; }
+        if (delInitial    != null) { handler.removeCallbacks(delInitial);    delInitial    = null; }
+        if (delFast       != null) { handler.removeCallbacks(delFast);       delFast       = null; }
+        if (fwdDelInitial != null) { handler.removeCallbacks(fwdDelInitial); fwdDelInitial = null; }
+        if (fwdDelFast    != null) { handler.removeCallbacks(fwdDelFast);    fwdDelFast    = null; }
+        if (enterInitial  != null) { handler.removeCallbacks(enterInitial);  enterInitial  = null; }
+        if (enterFast     != null) { handler.removeCallbacks(enterFast);     enterFast     = null; }
+        // Dismiss any open popups when keyboard hides
+        if (punctuationPopup != null) { punctuationPopup.dismiss(); punctuationPopup = null; }
+        if (keyboardPopup    != null) { keyboardPopup.dismiss();    keyboardPopup    = null; }
 
         // Synchronously reset the visual state NOW, while widget references are
         // still valid. Android does NOT always call onCreateInputView() when the
@@ -420,8 +431,12 @@ public class WhisperInputMethodService extends InputMethodService {
         });
 
         // ── Keyboard — tap: switch keyboard  |  long-press: options popup ─────
+        // If popup is showing when tapped, the tap closes it AND switches keyboard.
         btnKeyboard.setOnClickListener(v -> {
             tap(v);
+            if (keyboardPopup != null && keyboardPopup.isShowing()) {
+                keyboardPopup.dismiss(); // dismiss first — listener will null the field
+            }
             if (mWhisper != null) stopTranscription();
             exitListeningMode(false);
             switchToPreviousInputMethod();
@@ -462,39 +477,39 @@ public class WhisperInputMethodService extends InputMethodService {
         btnUndo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
         btnRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
 
-        // ── Full Stop — tap: insert "."  |  long-press: punctuation popup ─────
+        // ── Full Stop / Punctuation toggle — tap toggles popup open/closed ──────
+        // Does NOT insert a period. Press again to close popup.
         btnFullStop.setOnClickListener(v -> {
             tap(v);
-            if (getCurrentInputConnection() != null)
-                getCurrentInputConnection().commitText(".", 1);
-        });
-        btnFullStop.setOnLongClickListener(v -> {
-            showPunctuationPopup(v);
-            return true;
+            if (punctuationPopup != null && punctuationPopup.isShowing()) {
+                punctuationPopup.dismiss(); // listener sets field to null
+            } else {
+                showPunctuationPopup(v);
+            }
         });
 
-        // ── Forward Delete ────────────────────────────────────────────────────
+        // ── Forward Delete with long-press repeat (uses own fwdDel runnables) ──
         btnForwardDel.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
                     tap(v);
                     doForwardDelete();
-                    delInitial = () -> {
+                    fwdDelInitial = () -> {
                         doForwardDelete();
-                        delFast = new Runnable() {
+                        fwdDelFast = new Runnable() {
                             @Override public void run() {
                                 doForwardDelete();
                                 handler.postDelayed(this, 50);
                             }
                         };
-                        handler.postDelayed(delFast, 50);
+                        handler.postDelayed(fwdDelFast, 50);
                     };
-                    handler.postDelayed(delInitial, 400);
+                    handler.postDelayed(fwdDelInitial, 400);
                     break;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    if (delInitial != null) { handler.removeCallbacks(delInitial); delInitial = null; }
-                    if (delFast    != null) { handler.removeCallbacks(delFast);    delFast    = null; }
+                    if (fwdDelInitial != null) { handler.removeCallbacks(fwdDelInitial); fwdDelInitial = null; }
+                    if (fwdDelFast    != null) { handler.removeCallbacks(fwdDelFast);    fwdDelFast    = null; }
                     break;
                 default: break;
             }
@@ -916,42 +931,41 @@ public class WhisperInputMethodService extends InputMethodService {
      * Three options: [Toggle Streaming] [⌨ Keyboard] [⚙ Settings]
      */
     private void showKeyboardOptionsPopup(View anchor) {
+        if (keyboardPopup != null && keyboardPopup.isShowing()) {
+            keyboardPopup.dismiss();
+            return;
+        }
         android.view.LayoutInflater inflater = android.view.LayoutInflater.from(this);
         android.view.View popupView = inflater.inflate(R.layout.popup_keyboard_options, null);
 
-        // Update streaming label to show current state
         android.widget.TextView tvStreaming = popupView.findViewById(R.id.popup_streaming);
-        tvStreaming.setText("Streaming\n" + (prefAutoStop ? "ON" : "OFF"));
+        tvStreaming.setText("Streaming
+" + (prefAutoStop ? "ON ✓" : "OFF"));
 
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
         popup.setElevation(8f);
         popup.setOutsideTouchable(true);
+        popup.setOnDismissListener(() -> keyboardPopup = null);
+        keyboardPopup = popup;
 
-        // Position above anchor
+        // Center popup over anchor
         popupView.measure(android.view.View.MeasureSpec.UNSPECIFIED,
                           android.view.View.MeasureSpec.UNSPECIFIED);
+        int popupW = popupView.getMeasuredWidth();
         int popupH = popupView.getMeasuredHeight();
-        popup.showAsDropDown(anchor, 0, -anchor.getHeight() - popupH - 8);
+        int xOff = (anchor.getWidth() - popupW) / 2;
+        int yOff = -anchor.getHeight() - popupH - 8;
+        popup.showAsDropDown(anchor, xOff, yOff);
 
-        // Option handlers
         tvStreaming.setOnClickListener(v -> {
             tap(v);
             popup.dismiss();
             prefAutoStop = !prefAutoStop;
             sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
-            // If currently listening in streaming mode, update continuousMode
             if (isListening) continuousMode = prefAutoStop;
             Log.d(TAG, "Streaming toggled to: " + prefAutoStop);
-        });
-
-        popupView.findViewById(R.id.popup_keyboard).setOnClickListener(v -> {
-            tap(v);
-            popup.dismiss();
-            if (mWhisper != null) stopTranscription();
-            exitListeningMode(false);
-            switchToPreviousInputMethod();
         });
 
         popupView.findViewById(R.id.popup_settings).setOnClickListener(v -> {
@@ -963,34 +977,43 @@ public class WhisperInputMethodService extends InputMethodService {
         });
     }
 
-    /**
-     * Show punctuation popup on long-press of the full-stop button.
-     * Options: ,  !  ?  -  (  )
-     */
     private void showPunctuationPopup(View anchor) {
         android.view.LayoutInflater inflater = android.view.LayoutInflater.from(this);
         android.view.View popupView = inflater.inflate(R.layout.popup_punctuation, null);
 
+        // NOT focusable so it doesn't auto-dismiss when items are clicked.
+        // outsideTouchable=true so touching outside the popup still dismisses it.
         PopupWindow popup = new PopupWindow(popupView,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
         popup.setElevation(8f);
         popup.setOutsideTouchable(true);
+        // Required for setOutsideTouchable to work when focusable=false
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                android.graphics.Color.TRANSPARENT));
+        popup.setOnDismissListener(() -> punctuationPopup = null);
+        punctuationPopup = popup;
 
+        // Center popup over anchor
         popupView.measure(android.view.View.MeasureSpec.UNSPECIFIED,
                           android.view.View.MeasureSpec.UNSPECIFIED);
+        int popupW = popupView.getMeasuredWidth();
         int popupH = popupView.getMeasuredHeight();
-        popup.showAsDropDown(anchor, 0, -anchor.getHeight() - popupH - 8);
+        int xOff = (anchor.getWidth() - popupW) / 2;
+        int yOff = -anchor.getHeight() - popupH - 8;
+        popup.showAsDropDown(anchor, xOff, yOff);
 
-        int[] ids = {R.id.punct_comma, R.id.punct_exclaim, R.id.punct_question,
-                     R.id.punct_dash,  R.id.punct_lparen,  R.id.punct_rparen};
-        String[] chars = {",", "!", "?", "-", "(", ")"};
+        // Items commit text WITHOUT dismissing — popup stays open for repeated use
+        int[] ids    = {R.id.punct_comma, R.id.punct_period, R.id.punct_exclaim,
+                        R.id.punct_question, R.id.punct_dash,
+                        R.id.punct_lparen,  R.id.punct_rparen};
+        String[] chs = {",", ".", "!", "?", "-", "(", ")"};
 
         for (int i = 0; i < ids.length; i++) {
-            final String ch = chars[i];
+            final String ch = chs[i];
             popupView.findViewById(ids[i]).setOnClickListener(v -> {
                 tap(v);
-                popup.dismiss();
+                // Do NOT dismiss — user can tap multiple times
                 if (getCurrentInputConnection() != null)
                     getCurrentInputConnection().commitText(ch, 1);
             });
