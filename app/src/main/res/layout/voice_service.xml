@@ -162,7 +162,7 @@
                     android:src="@drawable/ic_select_all"
                     android:contentDescription="@string/select_all"
                     android:scaleType="centerInside"
-                    android:padding="9dp" />
+                    android:padding="14dp" />
 
                 <TextView
                     android:id="@+id/btnClear"
@@ -207,7 +207,7 @@
                     android:src="@drawable/ic_cut"
                     android:contentDescription="@string/cut"
                     android:scaleType="centerInside"
-                    android:padding="9dp" />
+                    android:padding="14dp" />
 
                 <ImageButton
                     android:id="@+id/btnCopy"
@@ -219,7 +219,7 @@
                     android:src="@drawable/ic_copy"
                     android:contentDescription="@string/copy"
                     android:scaleType="centerInside"
-                    android:padding="9dp" />
+                    android:padding="14dp" />
 
                 <ImageButton
                     android:id="@+id/btnPaste"
@@ -230,7 +230,7 @@
                     android:src="@drawable/ic_paste"
                     android:contentDescription="@string/paste"
                     android:scaleType="centerInside"
-                    android:padding="9dp" />
+                    android:padding="14dp" />
 
             </LinearLayout>
 
@@ -253,7 +253,7 @@
                     android:text="@string/full_stop_toggle"
                     android:gravity="center"
                     android:textColor="#FFFFFF"
-                    android:textSize="15sp"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
 
                 <ImageButton
@@ -298,7 +298,8 @@
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_forward_del"
                     android:contentDescription="@string/forward_delete"
-                    android:scaleType="centerInside" />
+                    android:scaleType="centerInside"
+                    android:padding="4dp" />
 
                 <ImageButton
                     android:id="@+id/btnDel"
@@ -329,7 +330,7 @@
                     android:text="@string/space_bar"
                     android:gravity="center"
                     android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    android:textSize="36sp" />
 
                 <ImageButton
                     android:id="@+id/btnEnter"

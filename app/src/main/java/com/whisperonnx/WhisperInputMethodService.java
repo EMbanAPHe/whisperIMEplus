@@ -570,7 +570,7 @@ public class WhisperInputMethodService extends InputMethodService {
         // Swipe sensitivity: pixels of movement per cursor step.
         final float[] spaceSwipeState = {0f, 0f, 0f}; // [startX, lastX, totalDelta]
         final boolean[] spaceMoved = {false};
-        final float SWIPE_THRESHOLD_PX = 16f * getResources().getDisplayMetrics().density;
+        final float SWIPE_THRESHOLD_PX = 8f * getResources().getDisplayMetrics().density;
         btnSpace.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
@@ -587,7 +587,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     while (spaceSwipeState[2] > SWIPE_THRESHOLD_PX) {
                         spaceSwipeState[2] -= SWIPE_THRESHOLD_PX;
                         spaceMoved[0] = true;
-                        v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP,
+                        v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                         if (getCurrentInputConnection() != null)
                             getCurrentInputConnection().sendKeyEvent(
@@ -596,7 +596,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     while (spaceSwipeState[2] < -SWIPE_THRESHOLD_PX) {
                         spaceSwipeState[2] += SWIPE_THRESHOLD_PX;
                         spaceMoved[0] = true;
-                        v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP,
+                        v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                         if (getCurrentInputConnection() != null)
                             getCurrentInputConnection().sendKeyEvent(
