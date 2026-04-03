@@ -221,6 +221,10 @@ public class WhisperInputMethodService extends InputMethodService {
      * Prevents unbounded thread creation under rapid cancel/re-open cycles.
      * Daemon thread so it does not block JVM shutdown.
      */
+    /** Reused transparent background for popup windows — avoids per-open allocation. */
+    private static final android.graphics.drawable.ColorDrawable TRANSPARENT_DRAWABLE =
+            new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT);
+
     private final java.util.concurrent.ExecutorService stopExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "RecorderStopper");
@@ -245,7 +249,7 @@ public class WhisperInputMethodService extends InputMethodService {
         // ── Whisper: load on a background thread to avoid main-thread blocking ─
         mWhisper = new Whisper(this);
         final Whisper whisperRef = mWhisper; // local capture — immune to onDestroy nulling mWhisper
-        new Thread(() -> {
+        Thread modelLoader = new Thread(() -> {
             whisperRef.loadModel();
             handler.post(() -> {
                 // Confirm mWhisper still points to the same instance (not destroyed)
@@ -257,7 +261,9 @@ public class WhisperInputMethodService extends InputMethodService {
                 }
                 if (tvStatus != null) tvStatus.setVisibility(View.GONE);
             });
-        }, "WhisperModelLoader").start();
+        }, "WhisperModelLoader");
+        modelLoader.setDaemon(true);
+        modelLoader.start();
 
         // Apply defaults once, then read prefs
         sp = PreferenceManager.getDefaultSharedPreferences(this);
@@ -313,9 +319,21 @@ public class WhisperInputMethodService extends InputMethodService {
 
     @Override
     public void onStartInput(EditorInfo attribute, boolean restarting) {
-        // For TYPE_NULL fields (e.g. terminal, password managers) just stop
-        // recording — keeping the model loaded saves reload time on the next field.
-        if (attribute.inputType == EditorInfo.TYPE_NULL) {
+        int type = attribute.inputType;
+        int cls  = type & android.text.InputType.TYPE_MASK_CLASS;
+        int var  = type & android.text.InputType.TYPE_MASK_VARIATION;
+
+        // Stop recording for TYPE_NULL (terminal, password manager) and for all
+        // password variations — recording into a password field is a security risk.
+        boolean isPassword =
+            (cls == android.text.InputType.TYPE_CLASS_TEXT && (
+                var == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                var == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                var == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)) ||
+            (cls == android.text.InputType.TYPE_CLASS_NUMBER &&
+                var == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+
+        if (type == EditorInfo.TYPE_NULL || isPassword) {
             exitListeningMode(true);
         }
     }
@@ -385,7 +403,7 @@ public class WhisperInputMethodService extends InputMethodService {
     @SuppressLint("ClickableViewAccessibility")
     public View onCreateInputView() {
         sp = PreferenceManager.getDefaultSharedPreferences(this);
-        loadPrefs();
+        // loadPrefs() is called in onStartInputView which always follows — skip here
 
         View view = getLayoutInflater().inflate(R.layout.voice_service, null);
 
@@ -1098,8 +1116,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
         popup.setElevation(8f * getResources().getDisplayMetrics().density);
         popup.setOutsideTouchable(true);
-        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
-                android.graphics.Color.TRANSPARENT));
+        popup.setBackgroundDrawable(TRANSPARENT_DRAWABLE);
         popup.setOnDismissListener(() -> keyboardPopup = null);
         keyboardPopup = popup;
 
@@ -1141,8 +1158,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false);
         popup.setElevation(8f * getResources().getDisplayMetrics().density);
         popup.setOutsideTouchable(true);
-        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
-                android.graphics.Color.TRANSPARENT));
+        popup.setBackgroundDrawable(TRANSPARENT_DRAWABLE);
         popup.setOnDismissListener(() -> {
             punctuationPopup = null;
             punctuationVisible = false;
@@ -1194,10 +1210,11 @@ public class WhisperInputMethodService extends InputMethodService {
 
     private void doEnter() {
         if (getCurrentInputConnection() == null) return;
+        long t = android.os.SystemClock.uptimeMillis();
         getCurrentInputConnection().sendKeyEvent(
-                new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+                new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
         getCurrentInputConnection().sendKeyEvent(
-                new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+                new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
     }
 
     private void doForwardDelete() {
@@ -1266,6 +1283,8 @@ public class WhisperInputMethodService extends InputMethodService {
             }
         }
 
+        transcriptionHistory.clear(); // undo history doesn't survive a soft stop
+
         // If Whisper is processing or audio is queued, stay in LISTENING (dim)
         // state so the user sees the result is still pending.
         // onResultReceived will drain the queue and go IDLE when done.
@@ -1332,7 +1351,11 @@ public class WhisperInputMethodService extends InputMethodService {
                         });
                     });
                 } else {
-                    if (r.isInProgress()) new Thread(r::stop, "RecorderStopper").start();
+                    if (r.isInProgress()) {
+                        Thread t = new Thread(r::stop, "RecorderStopper-exit-fallback");
+                        t.setDaemon(true);
+                        t.start();
+                    }
                 }
             } else {
                 if (mRecorder.isInProgress()) mRecorder.stop();

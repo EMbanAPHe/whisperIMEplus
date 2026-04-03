@@ -217,17 +217,20 @@ public class Whisper {
         // prevent this, but safe to be explicit).
         final Recognizer r = recognizer;
         try {
-            if (r != null && RecordBuffer.getOutputBuffer() != null) {
+            if (r != null && RecordBuffer.getOutputBuffer() != null && mAction != null) {
                 startTime = android.os.SystemClock.elapsedRealtime(); // monotonic — unaffected by clock changes
-                // MSG_PROCESSING is not used by the listener (onUpdateReceived is a no-op)
-                // so we skip that call entirely.
                 r.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
             } else {
-                sendUpdate("Engine not initialized or audio buffer is empty");
+                Log.w(TAG, "Cannot transcribe: r=" + r + " action=" + mAction
+                        + " buffer=" + (RecordBuffer.getOutputBuffer() != null));
+                sendResult(new WhisperResult("", "", mAction)); // reset IME UI
             }
         } catch (Exception e) {
             Log.e(TAG, "Error during transcription", e);
-            sendUpdate("Transcription failed: " + e.getMessage());
+            // sendUpdate is a no-op for text messages in the IME listener, but
+            // we still call onResultReceived with an empty result so the IME
+            // can reset its progress UI — otherwise the spinner never clears.
+            sendResult(new WhisperResult("", "", mAction));
         } finally {
             mInProgress.set(false);
         }

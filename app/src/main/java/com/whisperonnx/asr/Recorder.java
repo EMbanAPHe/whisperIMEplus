@@ -21,6 +21,8 @@ import com.konovalov.vad.webrtc.config.SampleRate;
 import com.whisperonnx.R;
 
 import java.io.ByteArrayOutputStream;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
@@ -78,9 +80,13 @@ public class Recorder {
 
     private final Thread workerThread;
 
+    private final AudioManager mAudioManager;
+    private AudioFocusRequest mAudioFocusRequest = null;  // API 26+
+
     public Recorder(Context context) {
         this.mContext = context;
         sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+        mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         workerThread = new Thread(this::recordLoop, "RecorderWorker");
         workerThread.start();
     }
@@ -227,7 +233,8 @@ public class Recorder {
         int bufferSize = AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat);
         if (bufferSize < VAD_FRAME_SIZE * 2) bufferSize = VAD_FRAME_SIZE * 2;
 
-        AudioManager audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        // AudioManager already cached as mAudioManager — no system service call per recording
+        AudioManager audioManager = mAudioManager;
         // Only start Bluetooth SCO if a headset is connected — starting it
         // unconditionally wakes the Bluetooth stack and causes minor battery drain
         // and occasional audio routing glitches on devices with no BT headset.
@@ -259,11 +266,31 @@ public class Recorder {
             notifyStopWaiter();
             return;
         }
+        // Request transient exclusive audio focus so music/podcasts are ducked
+        // or paused while we record, and any other audio app's mic is released.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            AudioFocusRequest req = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build())
+                    .setAcceptsDelayedFocusGain(false)
+                    .setOnAudioFocusChangeListener(focusChange -> {})
+                    .build();
+            mAudioManager.requestAudioFocus(req);
+            mAudioFocusRequest = req;
+        } else {
+            //noinspection deprecation
+            mAudioManager.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE);
+        }
+
         audioRecord.startRecording();
 
         int bytesForThirtySeconds = sampleRateInHz * bytesPerSample * channels * 30;
 
-        ByteArrayOutputStream outputBuffer = new ByteArrayOutputStream();
+        // Pre-size for ~3s of speech to avoid repeated doubling/copying
+        ByteArrayOutputStream outputBuffer = new ByteArrayOutputStream(16000 * 2 * 3);
 
         byte[] audioData = new byte[bufferSize];
         int totalBytesRead = 0;
@@ -361,6 +388,17 @@ public class Recorder {
             } else {
                 sendUpdate(MSG_RECORDING_ERROR);
             }
+        }
+
+        // Abandon audio focus so music/other audio resumes
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            if (mAudioFocusRequest != null) {
+                mAudioManager.abandonAudioFocusRequest(mAudioFocusRequest);
+                mAudioFocusRequest = null;
+            }
+        } else {
+            //noinspection deprecation
+            mAudioManager.abandonAudioFocus(null);
         }
 
         notifyStopWaiter();
