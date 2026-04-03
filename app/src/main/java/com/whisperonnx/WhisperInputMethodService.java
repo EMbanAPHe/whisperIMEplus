@@ -251,8 +251,9 @@ public class WhisperInputMethodService extends InputMethodService {
             });
         }, "WhisperModelLoader").start();
 
-        // Read preferences early so prefAutoStart is valid in the callback above
+        // Apply defaults once, then read prefs
         sp = PreferenceManager.getDefaultSharedPreferences(this);
+        applyDefaultPrefs();
         loadPrefs();
     }
 
@@ -491,9 +492,9 @@ public class WhisperInputMethodService extends InputMethodService {
             tap(v);
             if (getCurrentInputConnection() == null) return;
             CharSequence before = getCurrentInputConnection()
-                    .getTextBeforeCursor(Integer.MAX_VALUE, 0);
+                    .getTextBeforeCursor(10_000, 0);
             CharSequence after  = getCurrentInputConnection()
-                    .getTextAfterCursor(Integer.MAX_VALUE, 0);
+                    .getTextAfterCursor(10_000, 0);
             if (before == null) before = "";
             if (after  == null) after  = "";
             getCurrentInputConnection()
@@ -783,7 +784,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     if (sessionGen != sid) return;
                     if (wasStreaming && isListening && !cancelRequested) {
                         // Restart a fresh VAD window quietly
-                        Log.d(TAG, "VAD timeout — restarting VAD for sid=" + sid);
+                        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "VAD timeout restart sid=" + sid);
                         // Stamp the same session ID so existing guards still pass
                         activeRecordingSessionId = sid;
                         mRecorder.initVad();
@@ -833,7 +834,15 @@ public class WhisperInputMethodService extends InputMethodService {
                     // new session queued while Whisper was busy with this old job.
                     // Do NOT touch isListening, mic state, or cancelRequested here —
                     // the active session owns those fields.
-                    handler.post(() -> processNextQueued());
+                    // Only drain the queue if Whisper is not already running —
+                    // the new session may have already called processNextQueued() and
+                    // started Whisper. Calling it again would be a no-op (isInProgress
+                    // guard inside) but it's cleaner to check here.
+                    handler.post(() -> {
+                        if (mWhisper != null && !mWhisper.isInProgress()) {
+                            processNextQueued();
+                        }
+                    });
                     return;
                 }
 
@@ -968,7 +977,7 @@ public class WhisperInputMethodService extends InputMethodService {
             // activeRecordingSessionId is deliberately NOT stamped here —
             // it will be stamped in that deferred start so MSG_RECORDING_DONE
             // from the old recording cannot pass the session guard.
-            Log.d(TAG, "startRecordingSession: recorder busy, deferring start to sid=" + sid);
+            if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "startRecordingSession: recorder busy, deferring sid=" + sid);
             pendingStartSessionId = sid;
             pendingStartVad       = useVad;
         } else {
@@ -1088,7 +1097,7 @@ public class WhisperInputMethodService extends InputMethodService {
             prefAutoStop = !prefAutoStop;
             sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
             if (isListening) continuousMode = prefAutoStop;
-            Log.d(TAG, "Streaming toggled to: " + prefAutoStop);
+            if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "Streaming toggled to: " + prefAutoStop);
         });
 
         popupView.findViewById(R.id.popup_settings).setOnClickListener(v -> {
@@ -1194,7 +1203,11 @@ public class WhisperInputMethodService extends InputMethodService {
             if (!stopExecutor.isShutdown()) {
                 stopExecutor.execute(() -> { if (r.isInProgress()) r.stop(); });
             } else {
-                if (r.isInProgress()) new Thread(r::stop, "RecorderStopper").start();
+                if (r.isInProgress()) {
+                    Thread t = new Thread(r::stop, "RecorderStopper-fallback");
+                    t.setDaemon(true);
+                    t.start();
+                }
             }
         }
 
@@ -1258,7 +1271,7 @@ public class WhisperInputMethodService extends InputMethodService {
                                 activeRecordingSessionId = pending;
                                 if (pendingStartVad) mRecorder.initVad();
                                 mRecorder.start();
-                                Log.d(TAG, "Deferred recorder start executed for sid=" + pending);
+                                if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "Deferred recorder start for sid=" + pending);
                             }
                         });
                     });
@@ -1295,8 +1308,7 @@ public class WhisperInputMethodService extends InputMethodService {
         mWhisper.setLanguage(sp != null ? sp.getString("language", "auto") : "auto");
         discardRequested = false;             // clear any pending discard
         activeWhisperSessionId = sessionGen;  // stamp BEFORE mWhisper.start()
-        Log.d(TAG, "startTranscription: " + audioBytes.length + " bytes, translate=" + translate
-                + " session=" + activeWhisperSessionId);
+        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "startTranscription: " + audioBytes.length + " bytes, session=" + activeWhisperSessionId);
         mWhisper.start();
     }
 
@@ -1446,48 +1458,34 @@ public class WhisperInputMethodService extends InputMethodService {
                 new KeyEvent(t, t, KeyEvent.ACTION_UP, keyCode, 0, 0));
     }
 
-    /** True after the first loadPrefs() call has written all default values. */
-    private boolean prefsInitialised = false;
-
     /**
-     * Reads preferences and writes defaults the first time so keys are
-     * present in SharedPreferences before any Settings widget reads them.
-     * Default-writing is guarded by prefsInitialised so the disk write only
-     * happens once per service lifetime regardless of how many times loadPrefs
-     * is called.
+     * Reads current preferences. Defaults are set once in onCreate() via
+     * applyDefaultPrefs() — this method just reads.
      */
     private void loadPrefs() {
         if (sp == null) sp = PreferenceManager.getDefaultSharedPreferences(this);
-
-        if (!prefsInitialised) {
-            SharedPreferences.Editor ed = null;
-            if (!sp.contains(SettingsActivity.KEY_LAUNCH_LISTENING)) {
-                if (ed == null) ed = sp.edit();
-                ed.putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
-            }
-            if (!sp.contains(SettingsActivity.KEY_AUTO_START)) {
-                if (ed == null) ed = sp.edit();
-                ed.putBoolean(SettingsActivity.KEY_AUTO_START, true);
-            }
-            if (!sp.contains(SettingsActivity.KEY_AUTO_STOP)) {
-                if (ed == null) ed = sp.edit();
-                ed.putBoolean(SettingsActivity.KEY_AUTO_STOP, true);
-            }
-            if (!sp.contains(SettingsActivity.KEY_AUTO_SWITCH)) {
-                if (ed == null) ed = sp.edit();
-                ed.putBoolean(SettingsActivity.KEY_AUTO_SWITCH, false);
-            }
-            if (!sp.contains(SettingsActivity.KEY_AUTO_SEND)) {
-                if (ed == null) ed = sp.edit();
-                ed.putBoolean(SettingsActivity.KEY_AUTO_SEND, false);
-            }
-            if (ed != null) ed.apply();
-            prefsInitialised = true;
-        }
-
         prefAutoStart  = sp.getBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
         prefAutoStop   = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,        true);
         prefAutoSwitch = sp.getBoolean(SettingsActivity.KEY_AUTO_SWITCH,      false);
         prefAutoSend   = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
+    }
+
+    /** Writes preference defaults once on first install. Called only from onCreate(). */
+    private void applyDefaultPrefs() {
+        if (sp == null) sp = PreferenceManager.getDefaultSharedPreferences(this);
+        SharedPreferences.Editor ed = null;
+        for (String[] kv : new String[][]{
+            {SettingsActivity.KEY_LAUNCH_LISTENING, "true"},
+            {SettingsActivity.KEY_AUTO_START,       "true"},
+            {SettingsActivity.KEY_AUTO_STOP,        "true"},
+            {SettingsActivity.KEY_AUTO_SWITCH,      "false"},
+            {SettingsActivity.KEY_AUTO_SEND,        "false"},
+        }) {
+            if (!sp.contains(kv[0])) {
+                if (ed == null) ed = sp.edit();
+                ed.putBoolean(kv[0], Boolean.parseBoolean(kv[1]));
+            }
+        }
+        if (ed != null) ed.apply();
     }
 }

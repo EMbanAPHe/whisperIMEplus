@@ -34,8 +34,6 @@ public class Recorder {
     }
 
     private static final String TAG = "Recorder";
-    public static final String ACTION_STOP = "Stop";
-    public static final String ACTION_RECORD = "Record";
     public static final String MSG_RECORDING = "Recording...";
     public static final String MSG_RECORDING_DONE = "Recording done...!";
     public static final String MSG_RECORDING_ERROR = "Recording error...";
@@ -64,7 +62,7 @@ public class Recorder {
     private final Condition hasTask = lock.newCondition();
     private final Object fileSavedLock = new Object();
 
-    private volatile boolean shouldStartRecording = false;
+    private boolean shouldStartRecording = false; // accessed only under lock — no volatile needed
     private volatile boolean useVAD = false;  // volatile: written on main, read on worker
     private volatile int vadAmplitudeThreshold = 500; // RMS below this = silence pre-gate
     /**
@@ -308,7 +306,7 @@ public class Recorder {
                 isSpeech = loudEnough && vad.isSpeech(vadWindow);
                 if (isSpeech) {
                     if (!isRecording) {
-                        Log.d(TAG, "VAD Speech detected: recording starts");
+                        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "VAD Speech detected: recording starts");
                         sendUpdate(MSG_RECORDING);
                         hadSpeech = true;
                     }
@@ -333,7 +331,7 @@ public class Recorder {
                 hadSpeech   = true;
             }
         }
-        Log.d(TAG, "Total bytes recorded: " + totalBytesRead + ", hadSpeech: " + hadSpeech);
+        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "Total bytes recorded: " + totalBytesRead + ", hadSpeech: " + hadSpeech);
 
         if (useVAD) {
             useVAD = false;
@@ -357,7 +355,8 @@ public class Recorder {
             sendUpdate(MSG_VAD_TIMEOUT);
         } else {
             RecordBuffer.setOutputBuffer(outputBuffer.toByteArray());
-            if (totalBytesRead > 6400) {
+            // 3200 bytes = 100ms at 16kHz/16-bit — Whisper handles short audio fine
+            if (totalBytesRead > 3200) {
                 sendUpdate(MSG_RECORDING_DONE);
             } else {
                 sendUpdate(MSG_RECORDING_ERROR);

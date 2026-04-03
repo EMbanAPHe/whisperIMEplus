@@ -25,8 +25,7 @@ public class Whisper {
     }
 
     private static final String TAG = "Whisper";
-    public static final String MSG_PROCESSING = "Processing...";
-    public static final String MSG_PROCESSING_DONE = "Processing done...!";
+    public static final String MSG_PROCESSING_DONE = "Processing done...!"; // used in RecognizerListener log
 
     private final AtomicBoolean mInProgress = new AtomicBoolean(false);
 
@@ -112,9 +111,9 @@ public class Whisper {
                 Log.d(TAG, languageCode + " " + text);
                 WhisperResult whisperResult = new WhisperResult(text, languageCode, mAction);
                 sendResult(whisperResult);
-                long timeTaken = System.currentTimeMillis() - startTime;
+                long timeTaken = android.os.SystemClock.elapsedRealtime() - startTime;
                 Log.d(TAG, "Time Taken for transcription: " + timeTaken + "ms");
-                sendUpdate(MSG_PROCESSING_DONE);
+                // MSG_PROCESSING_DONE not sent — onUpdateReceived is a no-op in the IME listener
             }
 
             @Override
@@ -218,7 +217,7 @@ public class Whisper {
         final Recognizer r = recognizer;
         try {
             if (r != null && RecordBuffer.getOutputBuffer() != null) {
-                startTime = System.currentTimeMillis();
+                startTime = android.os.SystemClock.elapsedRealtime(); // monotonic — unaffected by clock changes
                 // MSG_PROCESSING is not used by the listener (onUpdateReceived is a no-op)
                 // so we skip that call entirely.
                 r.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
