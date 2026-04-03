@@ -25,6 +25,7 @@ public class Whisper {
     }
 
     private static final String TAG = "Whisper";
+    public static final String MSG_PROCESSING = "Processing...";  // used by MainActivity
     public static final String MSG_PROCESSING_DONE = "Processing done...!"; // used in RecognizerListener log
 
     private final AtomicBoolean mInProgress = new AtomicBoolean(false);

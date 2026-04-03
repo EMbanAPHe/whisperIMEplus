@@ -179,6 +179,14 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private final java.util.ArrayDeque<byte[]> audioQueue = new java.util.ArrayDeque<>();
 
+    /**
+     * Ring buffer of the last N texts committed via commitText().
+     * Used by undoLastTranscription() to remove exactly what was last added.
+     * Capacity capped at MAX_UNDO_HISTORY to bound memory use.
+     */
+    private static final int MAX_UNDO_HISTORY = 10;
+    private final java.util.ArrayDeque<String> transcriptionHistory = new java.util.ArrayDeque<>();
+
     // ── Preferences ───────────────────────────────────────────────────────────
     private boolean prefAutoStart;
     private boolean prefAutoStop;
@@ -507,7 +515,13 @@ public class WhisperInputMethodService extends InputMethodService {
         btnPaste.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_V, false); });
 
         // ── Undo / Redo ────────────────────────────────────────────────────────
+        // Short press: standard Ctrl+Z. Long press: remove last transcription.
         btnUndo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
+        btnUndo.setOnLongClickListener(v -> {
+            tap(v);
+            undoLastTranscription();
+            return true;
+        });
         btnRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
 
         // ── Full Stop / Punctuation toggle — tap toggles popup open/closed ──────
@@ -881,7 +895,14 @@ public class WhisperInputMethodService extends InputMethodService {
                 // Commit text — guarded by session check on this thread
                 final String trimmed = result.trim();
                 if (!trimmed.isEmpty() && getCurrentInputConnection() != null) {
-                    getCurrentInputConnection().commitText(trimmed + " ", 1);
+                    String committed = trimmed + " ";
+                    getCurrentInputConnection().commitText(committed, 1);
+                    // Record for word-level undo (long-press Undo button)
+                    handler.post(() -> {
+                        if (transcriptionHistory.size() >= MAX_UNDO_HISTORY)
+                            transcriptionHistory.pollFirst();
+                        transcriptionHistory.addLast(committed);
+                    });
                 }
 
                 // Auto-send
@@ -1189,6 +1210,40 @@ public class WhisperInputMethodService extends InputMethodService {
         }
     }
 
+    /**
+     * Removes the most recent transcription result from the text field.
+     * Uses the transcriptionHistory ring buffer to know exactly how many
+     * characters were committed, so it deletes precisely that text without
+     * touching anything the user typed manually or from a different session.
+     * Called by long-pressing the Undo button.
+     */
+    private void undoLastTranscription() {
+        if (transcriptionHistory.isEmpty()) {
+            // Nothing to undo — brief status flash
+            if (tvStatus != null) {
+                tvStatus.setText("Nothing to undo");
+                tvStatus.setVisibility(android.view.View.VISIBLE);
+                handler.postDelayed(() -> {
+                    if (tvStatus != null) tvStatus.setVisibility(android.view.View.GONE);
+                }, 1500);
+            }
+            return;
+        }
+        String last = transcriptionHistory.pollLast();
+        if (getCurrentInputConnection() == null) return;
+        // Verify the text before the cursor actually ends with what we committed
+        // before deleting — guards against the user having moved the cursor or
+        // edited manually since the transcription was committed.
+        CharSequence before = getCurrentInputConnection()
+                .getTextBeforeCursor(last.length(), 0);
+        if (before != null && before.toString().equals(last)) {
+            getCurrentInputConnection().deleteSurroundingText(last.length(), 0);
+        } else {
+            // Cursor has moved or content changed — fall back to Ctrl+Z
+            sendCtrlKey(KeyEvent.KEYCODE_Z, false);
+        }
+    }
+
     private void stopListeningGracefully() {
         continuousMode        = false;   // stop the continuous loop
         isListening           = false;   // prevent auto-restart
@@ -1245,6 +1300,7 @@ public class WhisperInputMethodService extends InputMethodService {
         isListening           = false;
         isRecording           = false;
         pendingStartSessionId = 0;   // cancel any deferred start
+        transcriptionHistory.clear(); // undo history is session-scoped
         final int sid         = ++sessionGen;
 
         if (mRecorder != null) {

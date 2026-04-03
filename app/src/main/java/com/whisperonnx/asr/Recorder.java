@@ -64,7 +64,7 @@ public class Recorder {
 
     private boolean shouldStartRecording = false; // accessed only under lock — no volatile needed
     private volatile boolean useVAD = false;  // volatile: written on main, read on worker
-    private volatile int vadAmplitudeThreshold = 500; // RMS below this = silence pre-gate
+    private volatile int vadAmplitudeThreshold = 200; // RMS below this = silence pre-gate
     /**
      * When set to a future uptime timestamp, the VAD amplitude gate is raised
      * very high until that time. Call suppressVadTrigger() from the IME to blank
@@ -133,7 +133,7 @@ public class Recorder {
         // Amplitude gate: RMS threshold applied only BEFORE speech is detected.
         // Blocks haptic feedback vibrations, button taps, and quiet ambient noise
         // from triggering recording. Does NOT affect mid-speech frames.
-        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 800);
+        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 200);
         useVAD = true;
         Log.d(TAG, "VAD initialized: silenceMs=" + silenceDurationMs
                 + " mode=" + vadMode + " ampThreshold=" + vadAmplitudeThreshold);
