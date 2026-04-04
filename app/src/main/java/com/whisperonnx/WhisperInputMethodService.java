@@ -733,15 +733,13 @@ public class WhisperInputMethodService extends InputMethodService {
     private void setRecorderListener() {
         mRecorder.setListener(message -> {
             // Called on Recorder worker thread — all UI via handler.post().
-            //
-            // Capture activeRecordingSessionId, NOT sessionGen. This field is
-            // stamped at the moment mRecorder.start() is called for THIS recording,
-            // so sid always reflects which session owns the recording being reported.
-            // If a new session starts before this callback fires, activeRecordingSessionId
-            // will have a new value and the guard will correctly discard this callback.
+            // AudioRecord now runs CONTINUOUSLY for the session — MSG_RECORDING_DONE
+            // means a speech segment was extracted and buffered, NOT that AudioRecord
+            // stopped. Do NOT restart the recorder in response to MSG_RECORDING_DONE.
             final int sid = activeRecordingSessionId;
 
             if (message.equals(Recorder.MSG_RECORDING)) {
+                // VAD confirmed speech onset — show RECORDING state
                 isRecording = true;
                 handler.post(() -> {
                     if (sessionGen != sid) return;
@@ -749,34 +747,23 @@ public class WhisperInputMethodService extends InputMethodService {
                 });
 
             } else if (message.equals(Recorder.MSG_RECORDING_DONE)) {
-                // IMPORTANT: recordLoop()'s finally { mInProgress.set(false) } has
-                // NOT yet run. POST to handler so it runs after the finally block.
+                // A speech segment has been extracted and written to RecordBuffer.
+                // AudioRecord is still running — return to LISTENING state and
+                // queue the segment for transcription.
                 isRecording = false;
                 HapticFeedback.vibrate(this);
 
                 if (!cancelRequested) {
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
-
                     handler.post(() -> {
                         if (sessionGen != sid || cancelRequested) return;
-
+                        // Queue and transcribe — AudioRecord keeps running, no restart needed
                         audioQueue.offer(capturedAudio);
                         processNextQueued();
-
-                        if (continuousMode) {
-                            // Re-stamp before starting the next recording so its
-                            // callbacks are tied to the same session ID.
-                            activeRecordingSessionId = sid;
-                            mRecorder.initVad();
-                            mRecorder.start();
-                            setMicState(MicState.LISTENING);
-                        } else {
-                            setMicState(MicState.LISTENING);
-                        }
+                        // Return to LISTENING so the user knows we're ready for the next sentence
+                        setMicState(MicState.LISTENING);
                     });
                 } else {
-                    // Cancelled — go idle. Do NOT reset cancelRequested (Whisper
-                    // may still be processing; its guard reads this flag).
                     isListening    = false;
                     continuousMode = false;
                     handler.post(() -> {
@@ -805,31 +792,22 @@ public class WhisperInputMethodService extends InputMethodService {
                 });
 
             } else if (message.equals(Recorder.MSG_VAD_TIMEOUT)) {
-                // 30-second VAD window elapsed with no speech detected.
-                // No audio was sent to Whisper so there is nothing to transcribe.
-                // In streaming mode: silently restart the VAD window so the user
-                // can keep speaking naturally without the keyboard appearing to freeze.
-                // In single-take mode: go idle silently (no error shown).
+                // 30 seconds of silence with no speech. AudioRecord is still running.
+                // In single-take (non-continuous) mode: go idle.
+                // In streaming mode: Recorder already reset its silence counter internally,
+                // no restart needed — just stay in LISTENING state.
                 isRecording = false;
                 final boolean wasStreaming = continuousMode;
                 handler.post(() -> {
                     if (sessionGen != sid) return;
-                    if (wasStreaming && isListening && !cancelRequested) {
-                        // Restart a fresh VAD window quietly
-                        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "VAD timeout restart sid=" + sid);
-                        // Stamp the same session ID so existing guards still pass
-                        activeRecordingSessionId = sid;
-                        mRecorder.initVad();
-                        mRecorder.start();
-                        // Stay in LISTENING state — no visual change needed
-                    } else {
-                        // Single-take or no longer listening
+                    if (!wasStreaming || !isListening || cancelRequested) {
                         isListening    = false;
                         continuousMode = false;
                         setMicState(MicState.IDLE);
                         setCancelEnabled(false);
                         resetProgressUi();
                     }
+                    // else: streaming mode — stay LISTENING, AudioRecord continues
                 });
             }
         });

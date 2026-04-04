@@ -4,10 +4,13 @@ import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
@@ -21,14 +24,43 @@ import com.konovalov.vad.webrtc.config.SampleRate;
 import com.whisperonnx.R;
 
 import java.io.ByteArrayOutputStream;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Continuous-recording VAD recorder.
+ *
+ * AudioRecord runs for the entire session lifetime — it is opened once in
+ * start() and closed once in stop(). It does NOT stop and restart between
+ * sentences. This eliminates:
+ *
+ *   • The inter-sentence gap where AudioRecord is being reinitialised and
+ *     the first few frames of the next sentence are silently dropped.
+ *
+ *   • The mInProgress race where MSG_RECORDING_DONE is sent and the IME
+ *     calls start() before the worker thread's finally block clears the flag.
+ *
+ *   • Repeated AudioRecord allocation / AudioFocus round-trips.
+ *
+ * Architecture:
+ *   One permanent worker thread (recordLoop) blocks until start() is called.
+ *   When started, it opens AudioRecord and enters a continuous read loop.
+ *   VAD classifies each 30ms frame.  When a speech segment ends, the segment
+ *   (+ pre-roll + post-roll) is extracted from internal buffers and signalled
+ *   to the IME via MSG_RECORDING_DONE.  AudioRecord keeps running for the
+ *   next segment.  MSG_RECORDING signals the IME to show the RECORDING state.
+ *
+ *   stop() signals the read loop to exit and waits (with timeout) for it to
+ *   finish the current frame before closing AudioRecord.
+ *
+ * Pre-roll buffer:
+ *   The last PRE_ROLL_FRAMES frames before speech detection are prepended to
+ *   each segment.  This captures the onset of the first phoneme, which VAD
+ *   would otherwise miss during its confirmation window.
+ */
 public class Recorder {
 
     public interface RecorderListener {
@@ -36,58 +68,60 @@ public class Recorder {
     }
 
     private static final String TAG = "Recorder";
-    public static final String MSG_RECORDING = "Recording...";
+    public static final String MSG_RECORDING      = "Recording...";
     public static final String MSG_RECORDING_DONE = "Recording done...!";
     public static final String MSG_RECORDING_ERROR = "Recording error...";
-    /**
-     * Fired when VAD mode times out (30 s) without detecting any speech.
-     * No audio is sent to RecordBuffer.  The IME restarts VAD silently in
-     * streaming mode, or goes idle in single-take mode.
-     */
-    public static final String MSG_VAD_TIMEOUT = "VAD timeout — no speech detected";
+    public static final String MSG_VAD_TIMEOUT    = "VAD timeout — no speech detected";
 
-    /**
-     * Maximum time (ms) that stop() will wait for the recording thread to finish
-     * draining audio and calling notify().  Under normal operation the thread
-     * finishes within one audio-buffer read (~30 ms). 3 000 ms is a large safety
-     * margin that covers even worst-case audio-system latency and eliminates the
-     * permanent deadlock that could occur if the permission-revocation path or any
-     * future early-return skips the notify() call.
-     */
     private static final long STOP_TIMEOUT_MS = 3_000;
 
+    // Audio constants
+    private static final int SAMPLE_RATE     = 16_000;
+    private static final int BYTES_PER_SAMPLE = 2;
+    private static final int VAD_FRAME_SIZE  = 480;          // 30ms at 16kHz
+    private static final int VAD_FRAME_BYTES = VAD_FRAME_SIZE * BYTES_PER_SAMPLE;
+
+    // Pre-roll: frames of audio before speech onset to prepend to each segment.
+    // 500ms = ~16 frames catches the consonant onset VAD misses during confirmation.
+    private static final int PRE_ROLL_FRAMES = 17; // ~500ms
+
+    // Maximum segment length: 30 seconds
+    private static final int MAX_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE * 30;
+
+    // Minimum segment length (100ms) — anything shorter is likely a false trigger
+    private static final int MIN_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE / 10;
+
     private final Context mContext;
-    private final AtomicBoolean mInProgress = new AtomicBoolean(false);
+    private final AudioManager mAudioManager;
+    private AudioFocusRequest mAudioFocusRequest = null;
 
     private RecorderListener mListener;
     private final Lock lock = new ReentrantLock();
     private final Condition hasTask = lock.newCondition();
-    private final Object fileSavedLock = new Object();
+    private final Object stopLock = new Object();
 
-    private boolean shouldStartRecording = false; // accessed only under lock — no volatile needed
-    private volatile boolean useVAD = false;  // volatile: written on main, read on worker
-    private volatile int vadAmplitudeThreshold = 200; // RMS below this = silence pre-gate
-    /**
-     * When set to a future uptime timestamp, the VAD amplitude gate is raised
-     * very high until that time. Call suppressVadTrigger() from the IME to blank
-     * the gate during spacebar swipe haptics, which couple through the chassis
-     * into the microphone and would otherwise trigger recording.
-     */
-    private volatile long vadSuppressedUntil = 0L;
+    // mInProgress: true while AudioRecord is open and the read loop is running.
+    // Set true before opening AudioRecord; cleared when the loop exits.
+    private final AtomicBoolean mInProgress = new AtomicBoolean(false);
+
+    // shouldStartRecording: set by start(), cleared when recording begins.
+    // Only accessed under lock.
+    private boolean shouldStartRecording = false;
+
+    private volatile boolean useVAD = false;
+    private volatile int     vadAmplitudeThreshold = 200;
+    private volatile long    vadSuppressedUntil    = 0L;
     private VadWebRTC vad = null;
-    private static final int VAD_FRAME_SIZE = 480;
-    private SharedPreferences sp;
 
+    private SharedPreferences sp;
     private final Thread workerThread;
 
-    private final AudioManager mAudioManager;
-    private AudioFocusRequest mAudioFocusRequest = null;  // API 26+
-
     public Recorder(Context context) {
-        this.mContext = context;
+        this.mContext     = context;
+        this.mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         sp = PreferenceManager.getDefaultSharedPreferences(mContext);
-        mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         workerThread = new Thread(this::recordLoop, "RecorderWorker");
+        workerThread.setDaemon(true);
         workerThread.start();
     }
 
@@ -95,14 +129,14 @@ public class Recorder {
         this.mListener = listener;
     }
 
+    /** Begin a recording session. AudioRecord is opened and runs until stop(). */
     public void start() {
         if (!mInProgress.compareAndSet(false, true)) {
-            Log.d(TAG, "Recording is already in progress...");
+            Log.d(TAG, "Already recording");
             return;
         }
         lock.lock();
         try {
-            Log.d(TAG, "Recording starts now");
             shouldStartRecording = true;
             hasTask.signal();
         } finally {
@@ -111,10 +145,8 @@ public class Recorder {
     }
 
     /**
-     * Suppresses the VAD amplitude gate for the given duration (ms) starting now.
-     * Safe to call from any thread — field is volatile.
-     * Typical use: call with 250ms each time a cursor-movement haptic fires during
-     * a spacebar swipe, so the vibration picked up by the mic doesn't start recording.
+     * Suppress the VAD amplitude gate for durationMs ms.
+     * Used by the IME to blank the gate during spacebar haptics.
      */
     public void suppressVadTrigger(int durationMs) {
         vadSuppressedUntil = android.os.SystemClock.uptimeMillis() + durationMs;
@@ -122,10 +154,7 @@ public class Recorder {
 
     public void initVad() {
         int silenceDurationMs = sp.getInt("silenceDurationMs", 1000);
-        // speechDurationMs is fixed at 50ms (1-2 frames) — configuring it via
-        // settings caused word clipping even at minimum values, because the VAD
-        // must hear that many ms of speech before confirming. 50ms is imperceptible.
-        int modeIndex = sp.getInt("vadMode", 2); // 0=Normal 1=Aggressive 2=VeryAggressive
+        int modeIndex         = sp.getInt("vadMode", 2);
         Mode vadMode = modeIndex == 0 ? Mode.NORMAL
                      : modeIndex == 1 ? Mode.AGGRESSIVE
                      : Mode.VERY_AGGRESSIVE;
@@ -136,9 +165,6 @@ public class Recorder {
                 .setSilenceDurationMs(silenceDurationMs)
                 .setSpeechDurationMs(50)
                 .build();
-        // Amplitude gate: RMS threshold applied only BEFORE speech is detected.
-        // Blocks haptic feedback vibrations, button taps, and quiet ambient noise
-        // from triggering recording. Does NOT affect mid-speech frames.
         vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 200);
         useVAD = true;
         Log.d(TAG, "VAD initialized: silenceMs=" + silenceDurationMs
@@ -146,32 +172,22 @@ public class Recorder {
     }
 
     /**
-     * Signals the recording thread to stop and waits for it to finish.
-     *
-     * Uses a timed wait (STOP_TIMEOUT_MS) instead of an indefinite wait() so
-     * that this method always returns even if the recording thread exits via an
-     * early-return path that does not call notify() (e.g. permission revoked
-     * mid-session).  Under normal operation the thread calls notify() well within
-     * one audio buffer read (~30 ms), so the timeout is never reached.
+     * Stop the recording session. Signals the read loop to exit and waits
+     * (with timeout) for it to finish. AudioRecord is closed inside the loop.
      */
     public void stop() {
-        Log.d(TAG, "Recording stopped");
+        Log.d(TAG, "stop() called");
         mInProgress.set(false);
-
-        synchronized (fileSavedLock) {
+        synchronized (stopLock) {
             try {
-                fileSavedLock.wait(STOP_TIMEOUT_MS);
+                stopLock.wait(STOP_TIMEOUT_MS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
     }
 
-    /**
-     * Permanently shuts down the Recorder.  Interrupts the worker thread so it
-     * exits its while(true) loop cleanly.  Call this from the IME's onDestroy()
-     * after stop() has been called.  The Recorder cannot be used after shutdown().
-     */
+    /** Permanently shuts down the worker thread. Call from onDestroy(). */
     public void shutdown() {
         workerThread.interrupt();
     }
@@ -181,17 +197,16 @@ public class Recorder {
     }
 
     private void sendUpdate(String message) {
-        if (mListener != null)
-            mListener.onUpdateReceived(message);
+        if (mListener != null) mListener.onUpdateReceived(message);
     }
+
+    // ── Worker thread ────────────────────────────────────────────────────────
 
     private void recordLoop() {
         while (true) {
             lock.lock();
             try {
-                while (!shouldStartRecording) {
-                    hasTask.await();
-                }
+                while (!shouldStartRecording) hasTask.await();
                 shouldStartRecording = false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -201,81 +216,205 @@ public class Recorder {
             }
 
             try {
-                recordAudio();
+                recordSession();
             } catch (Exception e) {
-                Log.e(TAG, "Recording error in recordLoop", e);
-                sendUpdate(MSG_RECORDING_ERROR);  // must match constant, not e.getMessage()
-                notifyStopWaiter();               // unblock any stop() waiter
+                Log.e(TAG, "Recording session error", e);
+                sendUpdate(MSG_RECORDING_ERROR);
             } finally {
                 mInProgress.set(false);
+                notifyStopWaiters();
             }
         }
     }
 
-    private void recordAudio() {
+    private void recordSession() {
         if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "AudioRecord permission is not granted");
             sendUpdate(mContext.getString(R.string.need_record_audio_permission));
-            // Notify stop() so it doesn't wait indefinitely.
-            // (This path does not reach the normal notify() at the end of the method.)
-            notifyStopWaiter();
+            notifyStopWaiters();
             return;
         }
 
-        int channels = 1;
-        int bytesPerSample = 2;
-        int sampleRateInHz = 16000;
-        int channelConfig = AudioFormat.CHANNEL_IN_MONO;
-        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
-        int audioSource = MediaRecorder.AudioSource.VOICE_RECOGNITION;
+        // ── Audio focus ───────────────────────────────────────────────────────
+        requestAudioFocus();
 
-        int bufferSize = AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat);
-        if (bufferSize < VAD_FRAME_SIZE * 2) bufferSize = VAD_FRAME_SIZE * 2;
+        // ── AudioRecord setup ─────────────────────────────────────────────────
+        int bufferSize = Math.max(
+                AudioRecord.getMinBufferSize(SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT),
+                VAD_FRAME_BYTES * 4);
 
-        // AudioManager already cached as mAudioManager — no system service call per recording
-        AudioManager audioManager = mAudioManager;
-        // Only start Bluetooth SCO if a headset is connected — starting it
-        // unconditionally wakes the Bluetooth stack and causes minor battery drain
-        // and occasional audio routing glitches on devices with no BT headset.
-        boolean useBluetooth = audioManager.isBluetoothScoAvailableOffCall()
-                && audioManager.isBluetoothScoOn();
-        if (useBluetooth) {
-            audioManager.startBluetoothSco();
-            audioManager.setBluetoothScoOn(true);
-        }
-
-        AudioRecord.Builder builder = new AudioRecord.Builder()
-                .setAudioSource(audioSource)
+        AudioRecord audioRecord = new AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                 .setAudioFormat(new AudioFormat.Builder()
-                        .setChannelMask(channelConfig)
-                        .setEncoding(audioFormat)
-                        .setSampleRate(sampleRateInHz)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(SAMPLE_RATE)
                         .build())
-                .setBufferSizeInBytes(bufferSize);
+                .setBufferSizeInBytes(bufferSize)
+                .build();
 
-        AudioRecord audioRecord = builder.build();
         if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord failed to initialise — state: " + audioRecord.getState());
+            Log.e(TAG, "AudioRecord failed to init");
             audioRecord.release();
-            if (useBluetooth) {
-                audioManager.stopBluetoothSco();
-                audioManager.setBluetoothScoOn(false);
-            }
+            abandonAudioFocus();
             sendUpdate(MSG_RECORDING_ERROR);
-            notifyStopWaiter();
+            notifyStopWaiters();
             return;
         }
-        // Request transient exclusive audio focus so music/podcasts are ducked
-        // or paused while we record, and any other audio app's mic is released.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            AudioFocusRequest req = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+
+        audioRecord.startRecording();
+        Log.d(TAG, "AudioRecord started — continuous session");
+
+        // ── Pre-roll ring buffer ──────────────────────────────────────────────
+        // Circular buffer: last PRE_ROLL_FRAMES frames before speech onset.
+        byte[][] preRoll = new byte[PRE_ROLL_FRAMES][VAD_FRAME_BYTES];
+        int preRollHead  = 0;   // next write slot (oldest slot to overwrite)
+        int preRollCount = 0;   // how many valid frames are in the buffer
+
+        // ── Per-segment state ─────────────────────────────────────────────────
+        byte[] frame       = new byte[VAD_FRAME_BYTES];
+        ByteArrayOutputStream segment  = new ByteArrayOutputStream(SAMPLE_RATE * BYTES_PER_SAMPLE * 3);
+        boolean inSpeech   = false;
+        boolean hadSpeech  = false;      // any speech this session
+        int     silentFrames = 0;        // silence frames after speech (for timeout)
+        final int TIMEOUT_FRAMES = (SAMPLE_RATE / VAD_FRAME_SIZE) * 30; // 30s of frames
+
+        while (mInProgress.get()) {
+            int bytesRead = audioRecord.read(frame, 0, VAD_FRAME_BYTES);
+            if (bytesRead <= 0) {
+                Log.w(TAG, "AudioRecord read error: " + bytesRead);
+                break;
+            }
+
+            if (useVAD) {
+                // Amplitude gate — only pre-speech
+                boolean vadSuppressed = !inSpeech
+                        && (android.os.SystemClock.uptimeMillis() < vadSuppressedUntil);
+                boolean loudEnough = inSpeech
+                        || (!vadSuppressed && rmsOf(frame, bytesRead) >= vadAmplitudeThreshold);
+                boolean isSpeech = loudEnough && vad.isSpeech(frame);
+
+                if (isSpeech) {
+                    if (!inSpeech) {
+                        // Speech onset — prepend pre-roll to capture consonant onset
+                        if (preRollCount > 0) {
+                            int start = preRollCount < PRE_ROLL_FRAMES
+                                    ? 0
+                                    : (preRollHead % PRE_ROLL_FRAMES);
+                            for (int i = 0; i < preRollCount; i++) {
+                                segment.write(preRoll[(start + i) % PRE_ROLL_FRAMES], 0, VAD_FRAME_BYTES);
+                            }
+                        }
+                        inSpeech = true;
+                        hadSpeech = true;
+                        silentFrames = 0;
+                        sendUpdate(MSG_RECORDING);
+                        Log.d(TAG, "Speech onset (with " + preRollCount + " pre-roll frames)");
+                    }
+                    segment.write(frame, 0, bytesRead);
+                    silentFrames = 0;
+
+                    // Hard limit: force-end if segment is getting too long
+                    if (segment.size() >= MAX_SEGMENT_BYTES) {
+                        Log.d(TAG, "Max segment length reached — flushing");
+                        flushSegment(segment);
+                        inSpeech = false;
+                        silentFrames = 0;
+                    }
+                } else {
+                    if (inSpeech) {
+                        // Still in the silence extension period — write trailing silence
+                        segment.write(frame, 0, bytesRead);
+                        silentFrames++;
+                        // VAD's silenceDurationMs controls when it transitions out of SPEECH.
+                        // Once isSpeech returns false, that already accounts for silence duration.
+                        // Flush immediately.
+                        inSpeech = false;
+                        flushSegment(segment);
+                        silentFrames = 0;
+                    } else {
+                        silentFrames++;
+                        // Update pre-roll ring buffer with silence frames too —
+                        // pre-roll includes the transition period into speech
+                        System.arraycopy(frame, 0, preRoll[preRollHead % PRE_ROLL_FRAMES], 0, VAD_FRAME_BYTES);
+                        preRollHead = (preRollHead + 1) % PRE_ROLL_FRAMES;
+                        if (preRollCount < PRE_ROLL_FRAMES) preRollCount++;
+
+                        // 30s without ANY speech: fire timeout
+                        if (!hadSpeech && silentFrames >= TIMEOUT_FRAMES) {
+                            Log.d(TAG, "VAD timeout — no speech in 30s");
+                            sendUpdate(MSG_VAD_TIMEOUT);
+                            // Reset for next 30s window — don't stop AudioRecord
+                            silentFrames = 0;
+                        }
+                    }
+                }
+            } else {
+                // Non-VAD mode: accumulate everything, no segmentation
+                if (!inSpeech) {
+                    sendUpdate(MSG_RECORDING);
+                    inSpeech = true;
+                    hadSpeech = true;
+                }
+                segment.write(frame, 0, bytesRead);
+                if (segment.size() >= MAX_SEGMENT_BYTES) {
+                    flushSegment(segment);
+                }
+            }
+        }
+
+        // ── Session ended (stop() was called) ────────────────────────────────
+        // Flush any partial segment
+        if (inSpeech && segment.size() > MIN_SEGMENT_BYTES) {
+            Log.d(TAG, "Flushing partial segment on stop: " + segment.size() + " bytes");
+            flushSegment(segment);
+        }
+
+        if (useVAD) {
+            useVAD = false;
+            vad.close();
+            vad = null;
+        }
+        audioRecord.stop();
+        audioRecord.release();
+        abandonAudioFocus();
+        Log.d(TAG, "AudioRecord released — session ended");
+    }
+
+    /**
+     * Write the accumulated segment to RecordBuffer and signal MSG_RECORDING_DONE.
+     * Resets the segment stream for the next utterance.
+     * AudioRecord continues running — this is NOT a stop/start cycle.
+     */
+    private void flushSegment(ByteArrayOutputStream segment) {
+        byte[] audio = segment.toByteArray();
+        segment.reset();
+
+        if (audio.length < MIN_SEGMENT_BYTES) {
+            Log.d(TAG, "Segment too short (" + audio.length + " bytes) — discarding");
+            sendUpdate(MSG_RECORDING_ERROR);
+            return;
+        }
+
+        RecordBuffer.setOutputBuffer(audio);
+        // IMPORTANT: MSG_RECORDING_DONE is sent AFTER the buffer is written and
+        // BEFORE AudioRecord is stopped — the IME must NOT call stop() in response
+        // to this message. It only needs to process the audio. AudioRecord continues.
+        sendUpdate(MSG_RECORDING_DONE);
+    }
+
+    private void requestAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioFocusRequest req = new AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                     .setAudioAttributes(new AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                             .build())
                     .setAcceptsDelayedFocusGain(false)
-                    .setOnAudioFocusChangeListener(focusChange -> {})
+                    .setOnAudioFocusChangeListener(change -> {})
                     .build();
             mAudioManager.requestAudioFocus(req);
             mAudioFocusRequest = req;
@@ -284,114 +423,10 @@ public class Recorder {
             mAudioManager.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL,
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE);
         }
+    }
 
-        audioRecord.startRecording();
-
-        int bytesForThirtySeconds = sampleRateInHz * bytesPerSample * channels * 30;
-
-        // Pre-size for ~3s of speech to avoid repeated doubling/copying
-        ByteArrayOutputStream outputBuffer = new ByteArrayOutputStream(16000 * 2 * 3);
-
-        byte[] audioData = new byte[bufferSize];
-        int totalBytesRead = 0;
-
-        boolean isSpeech;
-        boolean isRecording = false;
-        boolean hadSpeech   = false;   // true once VAD detects speech at least once
-        // Fixed-size ring buffer for VAD — avoids the full outputBuffer.toByteArray()
-        // copy that previously happened on every iteration (creating a growing heap
-        // allocation every ~30ms, causing GC pressure over long recordings).
-        byte[] vadWindow = new byte[VAD_FRAME_SIZE * 2];
-
-        while (mInProgress.get() && totalBytesRead < bytesForThirtySeconds) {
-            int bytesRead = audioRecord.read(audioData, 0, VAD_FRAME_SIZE * 2);
-            if (bytesRead <= 0) {
-                Log.d(TAG, "AudioRecord error, bytes read: " + bytesRead);
-                break;
-            }
-            totalBytesRead += bytesRead;
-
-            if (useVAD) {
-                // Update the fixed VAD window with the latest frame
-                int srcLen = Math.min(bytesRead, VAD_FRAME_SIZE * 2);
-                System.arraycopy(audioData, bytesRead - srcLen, vadWindow,
-                        VAD_FRAME_SIZE * 2 - srcLen, srcLen);
-
-                // Pre-gate: only apply amplitude threshold BEFORE speech starts.
-                // Once recording is active (isRecording=true) let VAD handle silence
-                // detection normally — gating mid-speech drops fricatives ('s','f','h').
-                //
-                // vadSuppressedUntil: temporarily raises the effective threshold to
-                // Integer.MAX_VALUE during spacebar cursor-swipe haptics. CLOCK_TICK
-                // vibrations couple through the phone chassis into the mic at ~200-500
-                // RMS — within range of the normal threshold. Suppression window blanks
-                // the gate for ~250 ms per cursor step so haptics never start recording.
-                boolean vadSuppressed = !isRecording
-                        && (android.os.SystemClock.uptimeMillis() < vadSuppressedUntil);
-                boolean loudEnough = isRecording
-                        || (!vadSuppressed && rmsOf(audioData, bytesRead) >= vadAmplitudeThreshold);
-                isSpeech = loudEnough && vad.isSpeech(vadWindow);
-                if (isSpeech) {
-                    if (!isRecording) {
-                        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "VAD Speech detected: recording starts");
-                        sendUpdate(MSG_RECORDING);
-                        hadSpeech = true;
-                    }
-                    isRecording = true;
-                    // Only accumulate output AFTER speech detected — no point
-                    // buffering silence that Whisper will never process.
-                    outputBuffer.write(audioData, 0, bytesRead);
-                } else {
-                    if (isRecording) {
-                        // Write the final trailing silence frame so Whisper
-                        // sees a clean end to the speech segment.
-                        outputBuffer.write(audioData, 0, bytesRead);
-                        isRecording = false;
-                        mInProgress.set(false);
-                    }
-                }
-            } else {
-                // Non-VAD mode: accumulate everything
-                outputBuffer.write(audioData, 0, bytesRead);
-                if (!isRecording) sendUpdate(MSG_RECORDING);
-                isRecording = true;
-                hadSpeech   = true;
-            }
-        }
-        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "Total bytes recorded: " + totalBytesRead + ", hadSpeech: " + hadSpeech);
-
-        if (useVAD) {
-            useVAD = false;
-            vad.close();
-            vad = null;
-            Log.d(TAG, "Closing VAD");
-        }
-        audioRecord.stop();
-        audioRecord.release();
-        if (useBluetooth) {
-            audioManager.stopBluetoothSco();
-            audioManager.setBluetoothScoOn(false);
-        }
-
-        if (!hadSpeech) {
-            // The 30-second VAD window elapsed without detecting any speech.
-            // Don't write silence to RecordBuffer — that would cause Whisper to
-            // process empty audio and output "(und)" on every timeout.
-            // Fire MSG_VAD_TIMEOUT so the IME can restart VAD silently.
-            Log.d(TAG, "VAD timeout — no speech detected, skipping Whisper");
-            sendUpdate(MSG_VAD_TIMEOUT);
-        } else {
-            RecordBuffer.setOutputBuffer(outputBuffer.toByteArray());
-            // 3200 bytes = 100ms at 16kHz/16-bit — Whisper handles short audio fine
-            if (totalBytesRead > 3200) {
-                sendUpdate(MSG_RECORDING_DONE);
-            } else {
-                sendUpdate(MSG_RECORDING_ERROR);
-            }
-        }
-
-        // Abandon audio focus so music/other audio resumes
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+    private void abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (mAudioFocusRequest != null) {
                 mAudioManager.abandonAudioFocusRequest(mAudioFocusRequest);
                 mAudioFocusRequest = null;
@@ -400,15 +435,14 @@ public class Recorder {
             //noinspection deprecation
             mAudioManager.abandonAudioFocus(null);
         }
-
-        notifyStopWaiter();
     }
 
-    /**
-     * Returns the RMS (root mean square) amplitude of a PCM-16 audio frame.
-     * Values range 0–32767. Typical speech is 1000–8000; haptic vibrations
-     * picked up by the mic are typically 100–800; silence is 0–200.
-     */
+    private void notifyStopWaiters() {
+        synchronized (stopLock) {
+            stopLock.notifyAll();
+        }
+    }
+
     private static int rmsOf(byte[] pcm16, int length) {
         if (length < 2) return 0;
         long sumSq = 0;
@@ -418,12 +452,5 @@ public class Recorder {
             sumSq += (long) s * s;
         }
         return (int) Math.sqrt((double) sumSq / samples);
-    }
-
-    /** Wakes any thread blocked in stop()'s timed wait. */
-    private void notifyStopWaiter() {
-        synchronized (fileSavedLock) {
-            fileSavedLock.notify();
-        }
     }
 }
