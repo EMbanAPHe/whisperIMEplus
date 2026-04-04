@@ -42,7 +42,8 @@ public class SettingsActivity extends AppCompatActivity {
     public static final String KEY_AUTO_SWITCH = "imeAutoSwitch";
     public static final String KEY_AUTO_SEND   = "imeAutoSend";
     /** Speech hold-time for VAD trigger (ms). Higher = less sensitive to brief noise. */
-    public static final String KEY_VAD_SPEECH_MS = "vadSpeechDurationMs";
+    public static final String KEY_VAD_SPEECH_MS      = "vadSpeechDurationMs";
+    public static final String KEY_HAPTIC_RECORDING   = "imeHapticRecording";
 
     private SharedPreferences sp = null;
     private Spinner spinnerLanguage;
@@ -137,7 +138,8 @@ public class SettingsActivity extends AppCompatActivity {
         // Streaming / auto-stop
         wireSwitchCompat(R.id.switch_auto_stop,   KEY_AUTO_STOP,   true);
         wireSwitchCompat(R.id.switch_auto_switch, KEY_AUTO_SWITCH, false);
-        wireSwitchCompat(R.id.switch_auto_send,   KEY_AUTO_SEND,   false);
+        wireSwitchCompat(R.id.switch_auto_send,     KEY_AUTO_SEND,       false);
+        wireSwitchCompat(R.id.switch_haptic_recording, KEY_HAPTIC_RECORDING, true);
 
         // ── Recognition-service language spinner (existing, unchanged) ──────────
         spinnerLanguage = findViewById(R.id.spnrLanguage);

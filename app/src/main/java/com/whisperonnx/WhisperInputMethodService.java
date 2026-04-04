@@ -192,6 +192,8 @@ public class WhisperInputMethodService extends InputMethodService {
     private boolean prefAutoStop;
     private boolean prefAutoSwitch;
     private boolean prefAutoSend;
+    /** If false, suppress the end-of-recording haptic pulse in streaming mode. */
+    private boolean prefHapticRecording;
 
     // Long-press repeat runnables — stored as fields so onFinishInputView can cancel them
     private Runnable delInitial;
@@ -751,7 +753,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 // AudioRecord is still running — return to LISTENING state and
                 // queue the segment for transcription.
                 isRecording = false;
-                HapticFeedback.vibrate(this);
+                if (prefHapticRecording) HapticFeedback.vibrate(this);
 
                 if (!cancelRequested) {
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
@@ -779,7 +781,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 isRecording    = false;
                 isListening    = false;
                 continuousMode = false;
-                HapticFeedback.vibrate(this);
+                if (prefHapticRecording) HapticFeedback.vibrate(this);
                 handler.post(() -> {
                     if (sessionGen != sid) return;
                     setMicState(MicState.IDLE);
@@ -890,7 +892,12 @@ public class WhisperInputMethodService extends InputMethodService {
 
                 // Commit text — guarded by session check on this thread
                 final String trimmed = result.trim();
-                if (!trimmed.isEmpty() && getCurrentInputConnection() != null) {
+                // Whisper annotates non-speech audio with parenthetical/bracketed
+                // descriptions: (air whooshing), [blank audio], (upbeat music), etc.
+                // These are model artefacts — discard any result that is entirely
+                // one or more parenthetical/bracketed tokens with no real words.
+                if (!trimmed.isEmpty() && !isNonSpeechAnnotation(trimmed)
+                        && getCurrentInputConnection() != null) {
                     String committed = trimmed + " ";
                     getCurrentInputConnection().commitText(committed, 1);
                     // Record for word-level undo (long-press Undo button)
@@ -1516,15 +1523,33 @@ public class WhisperInputMethodService extends InputMethodService {
     }
 
     /**
+     * Returns true if the Whisper result is entirely a non-speech annotation.
+     * Whisper outputs these when it hears non-vocal audio: (air whooshing),
+     * [blank audio], (upbeat music), (car engine revving), etc.
+     * A result is considered non-speech if every "token" (parenthetical or
+     * bracketed group) is an annotation, with no normal words between them.
+     */
+    private static boolean isNonSpeechAnnotation(String text) {
+        // Strip all (…) and […] groups. If nothing remains (after trimming),
+        // the entire result is annotations.
+        String stripped = text
+                .replaceAll("\\([^)]*\\)", "")   // remove (...)
+                .replaceAll("\\[[^\\]]*\\]", "") // remove [...]
+                .trim();
+        return stripped.isEmpty();
+    }
+
+    /**
      * Reads current preferences. Defaults are set once in onCreate() via
      * applyDefaultPrefs() — this method just reads.
      */
     private void loadPrefs() {
         if (sp == null) sp = PreferenceManager.getDefaultSharedPreferences(this);
-        prefAutoStart  = sp.getBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
-        prefAutoStop   = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,        true);
-        prefAutoSwitch = sp.getBoolean(SettingsActivity.KEY_AUTO_SWITCH,      false);
-        prefAutoSend   = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
+        prefAutoStart       = sp.getBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, true);
+        prefAutoStop        = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,        true);
+        prefAutoSwitch      = sp.getBoolean(SettingsActivity.KEY_AUTO_SWITCH,      false);
+        prefAutoSend        = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
+        prefHapticRecording = sp.getBoolean(SettingsActivity.KEY_HAPTIC_RECORDING, true);
     }
 
     /** Writes preference defaults once on first install. Called only from onCreate(). */

@@ -109,7 +109,7 @@ public class Recorder {
     private boolean shouldStartRecording = false;
 
     private volatile boolean useVAD = false;
-    private volatile int     vadAmplitudeThreshold = 200;
+    private volatile int     vadAmplitudeThreshold = 300;
     private volatile long    vadSuppressedUntil    = 0L;
     private VadWebRTC vad = null;
 
@@ -165,7 +165,7 @@ public class Recorder {
                 .setSilenceDurationMs(silenceDurationMs)
                 .setSpeechDurationMs(50)
                 .build();
-        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 200);
+        vadAmplitudeThreshold = sp.getInt("vadAmplitudeThreshold", 300);
         useVAD = true;
         Log.d(TAG, "VAD initialized: silenceMs=" + silenceDurationMs
                 + " mode=" + vadMode + " ampThreshold=" + vadAmplitudeThreshold);
