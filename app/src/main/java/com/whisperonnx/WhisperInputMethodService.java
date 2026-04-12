@@ -216,11 +216,12 @@ public class WhisperInputMethodService extends InputMethodService {
     /** Max time (ms) suppression is active. After this, auto-start resumes normally. */
     private static final long SUPPRESS_TIMEOUT_MS = 8_000L;
     /**
-     * Set when the user taps the mic button to START while Whisper is still
-     * processing the last segment. The new session is deferred until
-     * onResultReceived commits the result, then auto-starts.
+     * When true, an in-flight Whisper result from a superseded session should
+     * still be committed. Set when the user taps start before Whisper finishes
+     * (the previous utterance is valid — the user spoke it).
+     * Cleared by cancel (where the user explicitly chose to discard).
      */
-    private volatile boolean startAfterWhisper = false;
+    private volatile boolean commitStaleResult = false;
     /**
      * Language detected in the first "auto" segment of the current session.
      * Subsequent segments use this language instead of re-running detection,
@@ -527,27 +528,23 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                     return;
                 }
-                // If the recognizer is still producing a result from the last session,
-                // wait for it to finish before starting a new one. isResultPending()
-                // stays true until onSpeechRecognizedResult fires — unlike isInProgress()
-                // which clears almost immediately because Recognizer spawns its own thread.
+                // Start the new recording session immediately so no audio is lost.
+                // If Whisper is still finishing the previous utterance, set
+                // commitStaleResult so onResultReceived commits that text even though
+                // sessionGen will have changed by the time the callback fires.
                 if (mWhisper != null && mWhisper.isResultPending()) {
-                    // Result still incoming — defer the new session until it commits.
-                    // Show LISTENING state so the user knows the tap was registered.
-                    startAfterWhisper = true;
-                    setMicState(MicState.LISTENING);
-                    setCancelEnabled(true);
+                    commitStaleResult = true;
                     if (Log.isLoggable(TAG, Log.DEBUG))
-                        Log.d(TAG, "Mic tapped while result pending — deferring start");
-                } else {
-                    startRecordingSession(prefAutoStop);
+                        Log.d(TAG, "Mic tapped while result pending — starting now, stale result will commit");
                 }
+                startRecordingSession(prefAutoStop);
             }
         });
 
         // ── Cancel — hard stop: discard everything, go idle ───────────────────
         btnCancel.setOnClickListener(v -> {
             tap(v);
+            commitStaleResult = false; // explicit cancel — discard in-flight result
             // Set suppression BEFORE exitListeningMode so currentEditorKey() still works
             suppressNextAutoStart = true;
             suppressedForEditor   = currentEditorKey();
@@ -913,29 +910,24 @@ public class WhisperInputMethodService extends InputMethodService {
                 //   • If the keyboard was closed mid-inference, same protection.
                 final int sid = activeWhisperSessionId;
 
-                // Primary guard: session mismatch — this result is stale, discard it.
+                // Primary guard: session mismatch.
                 if (sessionGen != sid) {
-                    // The old inference is now done so mWhisper.isInProgress() just
-                    // became false.  Post to the main thread to drain any audio the
-                    // new session queued while Whisper was busy with this old job.
-                    // Do NOT touch isListening, mic state, or cancelRequested here —
-                    // the active session owns those fields.
-                    // Only drain the queue if Whisper is not already running —
-                    // the new session may have already called processNextQueued() and
-                    // started Whisper. Calling it again would be a no-op (isInProgress
-                    // guard inside) but it's cleaner to check here.
-                    handler.post(() -> {
-                        if (mWhisper != null && !mWhisper.isInProgress() && !mWhisper.isResultPending()) {
-                            processNextQueued();
-                        }
-                        // Consume any pending deferred session start that was queued
-                        // while we were processing this (now stale) segment.
-                        if (startAfterWhisper && !cancelRequested) {
-                            startAfterWhisper = false;
-                            startRecordingSession(prefAutoStop);
-                        }
-                    });
-                    return;
+                    if (commitStaleResult && !cancelRequested) {
+                        // User tapped Start before this result arrived — the previous
+                        // utterance is valid. Fall through to commit the text.
+                        // The new session's recorder is already capturing audio.
+                        commitStaleResult = false;
+                        // Fall through — do NOT return.
+                    } else {
+                        // Genuinely stale (cancelled, orientation change, etc.) — discard.
+                        handler.post(() -> {
+                            if (mWhisper != null && !mWhisper.isInProgress()
+                                    && !mWhisper.isResultPending()) {
+                                processNextQueued();
+                            }
+                        });
+                        return;
+                    }
                 }
 
                 // Secondary guard: discard (keep session alive, just drop this result)
@@ -1049,32 +1041,15 @@ public class WhisperInputMethodService extends InputMethodService {
                         // it will return here when done and reach the else branch.
                         processNextQueued();
                         if (!mWhisper.isInProgress()) {
-                            // Queue was empty — nothing started.
-                            if (startAfterWhisper) {
-                                // User tapped mic while we were processing — start now.
-                                startAfterWhisper = false;
-                                startRecordingSession(prefAutoStop);
-                            } else {
-                                isListening = false;
-                                setMicState(MicState.IDLE);
-                                setCancelEnabled(false);
-                            }
+                            isListening = false;
+                            setMicState(MicState.IDLE);
+                            setCancelEnabled(false);
                         }
                         // else: Whisper started on next queued segment; when it
                         // finishes onResultReceived fires again, hits this same
                         // branch, drains again until the queue is empty.
                     } else {
-                        // Continuous mode — drain next queued segment.
                         processNextQueued();
-                        // If the user tapped the mic while we were processing,
-                        // startAfterWhisper is set. In continuous mode the session
-                        // is already running so just clear the flag — the mic is
-                        // still active and will pick up the next sentence naturally.
-                        if (startAfterWhisper) {
-                            startAfterWhisper = false;
-                            // In continuous mode the recorder is still running, so we
-                            // don't need to start a new session — just clear the flag.
-                        }
                     }
                 });
             }
@@ -1321,6 +1296,7 @@ public class WhisperInputMethodService extends InputMethodService {
         continuousMode        = false;   // stop the continuous loop
         isListening           = false;   // prevent auto-restart
         pendingStartSessionId = 0;       // cancel any deferred recorder start
+        commitStaleResult     = false;   // soft stop — in-flight results commit via normal path
         // cancelRequested stays false — Whisper result will be committed normally.
         // sessionGen is NOT incremented — existing session IDs remain valid so
         // all in-flight callbacks (MSG_RECORDING_DONE, onResultReceived) pass
@@ -1372,7 +1348,7 @@ public class WhisperInputMethodService extends InputMethodService {
         isListening           = false;
         isRecording           = false;
         pendingStartSessionId = 0;   // cancel any deferred start
-        startAfterWhisper     = false; // cancel any deferred new session
+        commitStaleResult     = false; // cancel — discard any in-flight result
         transcriptionHistory.clear(); // undo history is session-scoped
         sessionLanguage       = "";   // reset language lock for next session
         // suppressNextAutoStart is intentionally NOT set here.
