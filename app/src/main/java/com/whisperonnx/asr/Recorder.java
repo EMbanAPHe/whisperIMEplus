@@ -24,7 +24,6 @@ import com.konovalov.vad.webrtc.config.SampleRate;
 import com.whisperonnx.R;
 
 import java.io.ByteArrayOutputStream;
-
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -33,33 +32,44 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Continuous-recording VAD recorder.
  *
- * AudioRecord runs for the entire session lifetime — it is opened once in
- * start() and closed once in stop(). It does NOT stop and restart between
- * sentences. This eliminates:
- *
- *   • The inter-sentence gap where AudioRecord is being reinitialised and
- *     the first few frames of the next sentence are silently dropped.
- *
- *   • The mInProgress race where MSG_RECORDING_DONE is sent and the IME
- *     calls start() before the worker thread's finally block clears the flag.
- *
- *   • Repeated AudioRecord allocation / AudioFocus round-trips.
+ * AudioRecord opens ONCE and runs for the entire IME service lifetime — it never
+ * closes between recording sessions. This eliminates the 100–300ms gap where
+ * AudioRecord is being re-initialised between sessions, during which any speech
+ * is lost before a single frame is read.
  *
  * Architecture:
- *   One permanent worker thread (recordLoop) blocks until start() is called.
- *   When started, it opens AudioRecord and enters a continuous read loop.
- *   VAD classifies each 30ms frame.  When a speech segment ends, the segment
- *   (+ pre-roll + post-roll) is extracted from internal buffers and signalled
- *   to the IME via MSG_RECORDING_DONE.  AudioRecord keeps running for the
- *   next segment.  MSG_RECORDING signals the IME to show the RECORDING state.
+ *   The worker thread has two phases:
  *
- *   stop() signals the read loop to exit and waits (with timeout) for it to
- *   finish the current frame before closing AudioRecord.
+ *   Phase 1 — Initial wait (IDLE, no AudioRecord):
+ *     Blocks in hasTask.await() waiting for the first start() call.
+ *     No audio hardware is active yet.
  *
- * Pre-roll buffer:
- *   The last PRE_ROLL_FRAMES frames before speech detection are prepended to
- *   each segment.  This captures the onset of the first phoneme, which VAD
- *   would otherwise miss during its confirmation window.
+ *   Phase 2 — Continuous read (STREAM, AudioRecord always open):
+ *     AudioRecord opens once and reads frames at the hardware cadence (~30ms/frame).
+ *     The read loop runs two sub-modes controlled by mSessionActive:
+ *
+ *       IDLE sub-mode  (mSessionActive=false):
+ *         Reads frames and updates the pre-roll ring buffer only.
+ *         Drains the hardware buffer so audio does not back up.
+ *         When start() is called, mSessionActive→true and the session begins
+ *         with 500ms of pre-roll already populated.
+ *
+ *       ACTIVE sub-mode (mSessionActive=true):
+ *         Full VAD + amplitude gate + segment extraction.
+ *         Segments are flushed via MSG_RECORDING_DONE; AudioRecord keeps running.
+ *
+ *   stop() transition (ACTIVE → IDLE):
+ *     Sets mSessionActive=false. The read loop detects the transition on the next
+ *     frame (~30ms), flushes any partial segment, and calls notifyStopWaiters()
+ *     so stop() can return. AudioRecord keeps running.
+ *
+ *   start() transition (IDLE → ACTIVE):
+ *     Sets mSessionActive=true. The read loop detects the transition on the next
+ *     frame. Pre-roll buffer is already populated — no warmup gap.
+ *
+ *   shutdown():
+ *     Sets shutdownRequested=true and calls audioRecord.stop() to unblock
+ *     the pending read(). The read loop exits cleanly.
  */
 public class Recorder {
 
@@ -68,73 +78,73 @@ public class Recorder {
     }
 
     private static final String TAG = "Recorder";
-    public static final String MSG_RECORDING      = "Recording...";
-    public static final String MSG_RECORDING_DONE = "Recording done...!";
-    public static final String MSG_RECORDING_ERROR = "Recording error...";
-    public static final String MSG_VAD_TIMEOUT    = "VAD timeout — no speech detected";
 
-    private static final long STOP_TIMEOUT_MS = 3_000;
+    public static final String MSG_RECORDING       = "Recording...";
+    public static final String MSG_RECORDING_DONE  = "Recording done...!";
+    public static final String MSG_RECORDING_ERROR = "Recording error...";
+    public static final String MSG_VAD_TIMEOUT     = "VAD timeout — no speech detected";
+
+    private static final long STOP_TIMEOUT_MS  = 3_000;
 
     // Audio constants
-    private static final int SAMPLE_RATE     = 16_000;
+    private static final int SAMPLE_RATE      = 16_000;
     private static final int BYTES_PER_SAMPLE = 2;
-    private static final int VAD_FRAME_SIZE  = 480;          // 30ms at 16kHz
-    private static final int VAD_FRAME_BYTES = VAD_FRAME_SIZE * BYTES_PER_SAMPLE;
+    private static final int VAD_FRAME_SIZE   = 480;           // 30ms at 16kHz
+    private static final int VAD_FRAME_BYTES  = VAD_FRAME_SIZE * BYTES_PER_SAMPLE;
 
-    // Pre-roll: frames of audio before speech onset to prepend to each segment.
-    // 500ms = ~16 frames catches the consonant onset VAD misses during confirmation.
-    private static final int PRE_ROLL_FRAMES = 17; // ~500ms
+    // Pre-roll: frames prepended at speech onset to capture consonant attack.
+    // 500ms = ~17 frames — persists across sessions so it's always populated.
+    private static final int PRE_ROLL_FRAMES  = 17;
 
-    // Maximum segment length: 30 seconds
+    // Tail overlap: frames from end of each segment prepended to the next.
+    private static final int TAIL_OVERLAP_FRAMES = 10;         // ~300ms
+
+    // Segment limits
     private static final int MAX_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE * 30;
-
-    // Minimum segment length (100ms) — anything shorter is likely a false trigger
     private static final int MIN_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE / 10;
 
-    // Tail overlap: append this many frames from the END of each segment to the
-    // START of the next. Prevents boundary words from being cut off when a phoneme
-    // falls exactly at the moment VAD transitions from speech to silence.
-    // 300ms = ~10 frames at 16kHz/30ms-per-frame
-    private static final int TAIL_OVERLAP_FRAMES = 10;
-
-    private final Context mContext;
+    private final Context      mContext;
     private final AudioManager mAudioManager;
-    private AudioFocusRequest mAudioFocusRequest = null;
+    private AudioFocusRequest  mAudioFocusRequest = null;
 
     private RecorderListener mListener;
-    private final Lock lock = new ReentrantLock();
-    private final Condition hasTask = lock.newCondition();
-    private final Object stopLock = new Object();
+    private final Object     stopLock = new Object();
 
-    // mInProgress: true while AudioRecord is open and the read loop is running.
-    // Set true before opening AudioRecord; cleared when the loop exits.
-    private final AtomicBoolean mInProgress = new AtomicBoolean(false);
+    // ── Session control ───────────────────────────────────────────────────────
+    /**
+     * True while the worker thread's VAD session is active.
+     * Set true by start(), false by stop().
+     * The read loop checks this each frame (~30ms cadence) to switch modes.
+     *
+     * Separate from mStreamOpen so that "stream is running" can be true while
+     * "session is active" is false (between-session idle phase).
+     */
+    private final AtomicBoolean mSessionActive   = new AtomicBoolean(false);
 
-    // shouldStartRecording: set by start(), cleared when recording begins.
-    // Only accessed under lock.
-    private boolean shouldStartRecording = false;
+    /**
+     * True once AudioRecord is open and the continuous read loop is running.
+     * Used for isInProgress() so the IME can tell the stream is alive.
+     */
+    private final AtomicBoolean mStreamOpen      = new AtomicBoolean(false);
 
-    private volatile boolean useVAD = false;
+    // ── Initial start gate ────────────────────────────────────────────────────
+    // Used ONCE to wake the thread from its initial await before AudioRecord opens.
+    private final Lock      startLock         = new ReentrantLock();
+    private final Condition startCondition    = startLock.newCondition();
+    private volatile boolean firstStartSignalled = false;
+
+    // ── VAD state (set by initVad(), read by worker thread) ──────────────────
+    private volatile boolean useVAD               = false;
     private volatile int     vadAmplitudeThreshold = 300;
-    private volatile long    vadSuppressedUntil    = 0L;
+    private volatile long    vadSuppressedUntil   = 0L;
     private VadWebRTC vad = null;
 
-    /**
-     * Tail overlap: last TAIL_OVERLAP_FRAMES frames from the most recently flushed
-     * segment. Prepended to the next speech segment to avoid boundary word loss.
-     */
-    private byte[] tailOverlapBuffer = null;
-
-    /**
-     * Adaptive noise floor: running average of silence-frame RMS values, used to
-     * dynamically raise the amplitude gate when the environment is noisier than
-     * the user's static threshold setting. Prevents false triggers in variable
-     * noise environments without requiring manual re-adjustment of the slider.
-     */
-    private float adaptiveNoiseFloor = 0f;
-    private static final float NOISE_FLOOR_ALPHA = 0.05f; // EMA coefficient
-
     private SharedPreferences sp;
+
+    // ── AudioRecord reference (for shutdown()) ────────────────────────────────
+    private volatile AudioRecord mAudioRecord = null;
+    private volatile boolean     shutdownRequested = false;
+
     private final Thread workerThread;
 
     public Recorder(Context context) {
@@ -150,29 +160,40 @@ public class Recorder {
         this.mListener = listener;
     }
 
-    /** Begin a recording session. AudioRecord is opened and runs until stop(). */
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /**
+     * Begin a VAD recording session.
+     * If AudioRecord is already running (between-session idle), the session begins
+     * on the next frame (~30ms) with the pre-roll buffer already populated.
+     * If this is the very first call, opens AudioRecord first (once per service life).
+     */
     public void start() {
-        if (!mInProgress.compareAndSet(false, true)) {
-            Log.d(TAG, "Already recording");
-            return;
-        }
-        lock.lock();
-        try {
-            shouldStartRecording = true;
-            hasTask.signal();
-        } finally {
-            lock.unlock();
+        mSessionActive.set(true);
+        // Signal the initial await on the very first call
+        if (!mStreamOpen.get() && !firstStartSignalled) {
+            startLock.lock();
+            try {
+                firstStartSignalled = true;
+                startCondition.signal();
+            } finally {
+                startLock.unlock();
+            }
         }
     }
 
     /**
      * Suppress the VAD amplitude gate for durationMs ms.
-     * Used by the IME to blank the gate during spacebar haptics.
+     * Called by the IME during spacebar haptics to prevent vibration triggering.
      */
     public void suppressVadTrigger(int durationMs) {
         vadSuppressedUntil = android.os.SystemClock.uptimeMillis() + durationMs;
     }
 
+    /**
+     * Initialise the WebRTC VAD with current preferences.
+     * Must be called before start() when VAD mode is desired.
+     */
     public void initVad() {
         int silenceDurationMs = sp.getInt("silenceDurationMs", 1000);
         int modeIndex         = sp.getInt("vadMode", 2);
@@ -193,12 +214,13 @@ public class Recorder {
     }
 
     /**
-     * Stop the recording session. Signals the read loop to exit and waits
-     * (with timeout) for it to finish. AudioRecord is closed inside the loop.
+     * End the current recording session. Sets mSessionActive=false and waits
+     * (up to STOP_TIMEOUT_MS) for the read loop to flush any partial segment.
+     * AudioRecord keeps running — the next start() incurs no warmup delay.
      */
     public void stop() {
-        Log.d(TAG, "stop() called");
-        mInProgress.set(false);
+        if (!mSessionActive.get()) return; // already idle
+        mSessionActive.set(false);
         synchronized (stopLock) {
             try {
                 stopLock.wait(STOP_TIMEOUT_MS);
@@ -208,82 +230,90 @@ public class Recorder {
         }
     }
 
-    /** Permanently shuts down the worker thread. Call from onDestroy(). */
+    /**
+     * Permanently shuts down the recorder.
+     * Stops and releases AudioRecord, interrupts the worker thread.
+     * Call from the IME's onDestroy(). The Recorder cannot be used after this.
+     */
     public void shutdown() {
+        shutdownRequested = true;
+        mSessionActive.set(false);
+        // Unblock the initial await (in case start() was never called)
+        startLock.lock();
+        try {
+            firstStartSignalled = true;
+            startCondition.signalAll();
+        } finally {
+            startLock.unlock();
+        }
+        // Unblock audioRecord.read() so the thread can exit
+        AudioRecord ar = mAudioRecord;
+        if (ar != null) {
+            try { ar.stop(); } catch (Exception ignored) {}
+        }
         workerThread.interrupt();
     }
 
+    /**
+     * True while the VAD session is active (speech is being captured/segmented).
+     * Also returns true while AudioRecord is open (stream is running) so the IME
+     * can use this to check whether the recorder needs to be stopped on exit.
+     */
     public boolean isInProgress() {
-        return mInProgress.get();
+        return mSessionActive.get() || mStreamOpen.get();
+    }
+
+    /**
+     * True only while a VAD session is actively running (between start() and stop()).
+     * Unlike isInProgress(), returns false when AudioRecord is open but idle
+     * (between sessions). Use this in the IME's defer-start logic so that
+     * "stream open but no active session" does not trigger an unnecessary defer.
+     */
+    public boolean isSessionActive() {
+        return mSessionActive.get();
     }
 
     private void sendUpdate(String message) {
         if (mListener != null) mListener.onUpdateReceived(message);
     }
 
-    // ── Worker thread ────────────────────────────────────────────────────────
+    // ── Worker thread ─────────────────────────────────────────────────────────
 
     private void recordLoop() {
-        while (true) {
-            lock.lock();
-            try {
-                while (!shouldStartRecording) hasTask.await();
-                shouldStartRecording = false;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            } finally {
-                lock.unlock();
+        // ── Phase 1: initial await ────────────────────────────────────────────
+        // Block until the first start() call. No audio hardware active yet.
+        startLock.lock();
+        try {
+            while (!firstStartSignalled) {
+                try { startCondition.await(); }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
-
-            // Re-assert mInProgress=true immediately before starting the session.
-            //
-            // Race this prevents:
-            //   1. Old session runs, mInProgress=true
-            //   2. stop() → mInProgress.set(false) → waits on stopLock
-            //   3. Old session exits its while loop, cleans up
-            //   4. start() → compareAndSet(false,true) → succeeds, shouldStartRecording=true
-            //   5. Old session's recordLoop finally → mInProgress.set(false) ← OVERWRITES step 4
-            //   6. Worker loops, finds shouldStartRecording=true, calls recordSession()
-            //   7. recordSession()'s while(mInProgress.get()) → false → exits immediately
-            //   → New recording captures nothing
-            //
-            // Setting true here (after consuming shouldStartRecording, before calling
-            // recordSession) ensures the new session's while loop sees the correct state
-            // regardless of what the previous finally did.
-            mInProgress.set(true);
-
-            try {
-                recordSession();
-            } catch (Exception e) {
-                Log.e(TAG, "Recording session error", e);
-                sendUpdate(MSG_RECORDING_ERROR);
-            } finally {
-                mInProgress.set(false);
-                notifyStopWaiters();
-            }
+        } finally {
+            startLock.unlock();
         }
-    }
 
-    private void recordSession() {
+        if (shutdownRequested || Thread.currentThread().isInterrupted()) return;
+
+        // Check microphone permission
         if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
             sendUpdate(mContext.getString(R.string.need_record_audio_permission));
-            notifyStopWaiters();
             return;
         }
 
-        // ── Audio focus ───────────────────────────────────────────────────────
+        // ── Phase 2: open AudioRecord (once for service lifetime) ─────────────
         requestAudioFocus();
 
-        // ── AudioRecord setup ─────────────────────────────────────────────────
         int bufferSize = Math.max(
                 AudioRecord.getMinBufferSize(SAMPLE_RATE,
                         AudioFormat.CHANNEL_IN_MONO,
                         AudioFormat.ENCODING_PCM_16BIT),
                 VAD_FRAME_BYTES * 4);
 
-        AudioRecord audioRecord = new AudioRecord.Builder()
+        AudioRecord ar = new AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                 .setAudioFormat(new AudioFormat.Builder()
                         .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
@@ -293,182 +323,207 @@ public class Recorder {
                 .setBufferSizeInBytes(bufferSize)
                 .build();
 
-        if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+        if (ar.getState() != AudioRecord.STATE_INITIALIZED) {
             Log.e(TAG, "AudioRecord failed to init");
-            audioRecord.release();
+            ar.release();
             abandonAudioFocus();
             sendUpdate(MSG_RECORDING_ERROR);
-            notifyStopWaiters();
             return;
         }
 
-        audioRecord.startRecording();
-        Log.d(TAG, "AudioRecord started — continuous session");
+        ar.startRecording();
+        mAudioRecord = ar;
+        mStreamOpen.set(true);
+        Log.d(TAG, "AudioRecord opened — continuous stream running");
 
-        // ── Pre-roll ring buffer ──────────────────────────────────────────────
-        // Circular buffer: last PRE_ROLL_FRAMES frames before speech onset.
+        // ── State that PERSISTS across sessions ───────────────────────────────
+        // Pre-roll ring buffer: populated in idle mode so it's ready the instant
+        // a new session starts — no warmup gap, no clipped consonants.
         byte[][] preRoll = new byte[PRE_ROLL_FRAMES][VAD_FRAME_BYTES];
-        int preRollHead  = 0;   // next write slot (oldest slot to overwrite)
-        int preRollCount = 0;   // how many valid frames are in the buffer
+        int preRollHead  = 0;
+        int preRollCount = 0;
+        byte[] tailOverlapBuffer = null;
 
-        // ── Per-segment state ─────────────────────────────────────────────────
-        byte[] frame       = new byte[VAD_FRAME_BYTES];
-        ByteArrayOutputStream segment  = new ByteArrayOutputStream(SAMPLE_RATE * BYTES_PER_SAMPLE * 3);
-        boolean inSpeech   = false;
-        boolean hadSpeech  = false;      // any speech this session
-        int     silentFrames = 0;        // silence frames after speech (for timeout)
-        final int TIMEOUT_FRAMES = (SAMPLE_RATE / VAD_FRAME_SIZE) * 30; // 30s of frames
+        // ── Per-session state (reset on each IDLE→ACTIVE transition) ─────────
+        ByteArrayOutputStream segment = new ByteArrayOutputStream(96 * 1024);
+        boolean inSpeech     = false;
+        boolean hadSpeech    = false;
+        int     silentFrames = 0;
+        float   adaptiveFloor = 0f;
+        final int TIMEOUT_FRAMES = (SAMPLE_RATE / VAD_FRAME_SIZE) * 30; // 30s
 
-        while (mInProgress.get()) {
-            int bytesRead = audioRecord.read(frame, 0, VAD_FRAME_BYTES);
-            if (bytesRead <= 0) {
-                Log.w(TAG, "AudioRecord read error: " + bytesRead);
-                break;
-            }
+        // Transition tracking — detect edge changes to mSessionActive
+        boolean wasActive = mSessionActive.get(); // true if start() already called
 
-            if (useVAD) {
-                // Amplitude gate — only pre-speech
-                boolean vadSuppressed = !inSpeech
-                        && (android.os.SystemClock.uptimeMillis() < vadSuppressedUntil);
-                // Use whichever is higher: user's static threshold or adaptive noise floor.
-                // The adaptive floor rises gradually in noisy environments, preventing
-                // false triggers when ambient noise exceeds the user's slider setting.
-                int effectiveThreshold = (int) Math.max(vadAmplitudeThreshold, adaptiveNoiseFloor * 1.5f);
-                boolean loudEnough = inSpeech
-                        || (!vadSuppressed && rmsOf(frame, bytesRead) >= effectiveThreshold);
-                boolean isSpeech = loudEnough && vad.isSpeech(frame);
+        byte[] frame = new byte[VAD_FRAME_BYTES];
 
-                if (isSpeech) {
-                    if (!inSpeech) {
-                        // Speech onset — prepend tail overlap from previous segment (if any),
-                        // then the pre-roll buffer. This ensures:
-                        //   • Boundary words from the previous segment are repeated for context
-                        //   • Consonant onset of the current segment is not clipped by VAD delay
-                        if (tailOverlapBuffer != null) {
-                            segment.write(tailOverlapBuffer, 0, tailOverlapBuffer.length);
-                            tailOverlapBuffer = null;
-                        }
-                        if (preRollCount > 0) {
-                            int start = preRollCount < PRE_ROLL_FRAMES
-                                    ? 0
-                                    : (preRollHead % PRE_ROLL_FRAMES);
-                            for (int i = 0; i < preRollCount; i++) {
-                                segment.write(preRoll[(start + i) % PRE_ROLL_FRAMES], 0, VAD_FRAME_BYTES);
+        // ── Phase 3: continuous read loop ─────────────────────────────────────
+        try {
+            while (!shutdownRequested && !Thread.currentThread().isInterrupted()) {
+                int bytesRead = ar.read(frame, 0, VAD_FRAME_BYTES);
+                if (bytesRead <= 0) {
+                    Log.w(TAG, "AudioRecord read returned " + bytesRead + " — exiting");
+                    break;
+                }
+
+                boolean nowActive = mSessionActive.get();
+
+                // ── Transition: ACTIVE → IDLE ─────────────────────────────────
+                // stop() was called. Flush any partial segment and notify stop().
+                if (wasActive && !nowActive) {
+                    wasActive = false;
+                    if (inSpeech && segment.size() > MIN_SEGMENT_BYTES) {
+                        Log.d(TAG, "Session ended mid-speech — flushing partial segment");
+                        flushSegment(segment, 0);
+                    }
+                    // Reset per-session state
+                    inSpeech = false; hadSpeech = false;
+                    silentFrames = 0; adaptiveFloor = 0f;
+                    segment.reset();
+                    if (useVAD) {
+                        useVAD = false;
+                        if (vad != null) { vad.close(); vad = null; }
+                    }
+                    // Wake stop() — audio has been committed
+                    synchronized (stopLock) { stopLock.notifyAll(); }
+                }
+
+                // ── Transition: IDLE → ACTIVE ─────────────────────────────────
+                // start() was called. Pre-roll buffer is already populated.
+                if (!wasActive && nowActive) {
+                    wasActive = true;
+                    inSpeech = false; hadSpeech = false;
+                    silentFrames = 0; adaptiveFloor = 0f;
+                    segment.reset();
+                    Log.d(TAG, "Session started — pre-roll has " + preRollCount + " frames ready");
+                }
+
+                // ── Always update pre-roll (both modes) ───────────────────────
+                // In IDLE mode: keeps the buffer fresh so the next session has
+                // no warmup gap. In ACTIVE mode: pre-roll is used at speech onset.
+                if (!inSpeech) {
+                    // Only update pre-roll when not mid-speech (onset detection only)
+                    System.arraycopy(frame, 0, preRoll[preRollHead % PRE_ROLL_FRAMES], 0, VAD_FRAME_BYTES);
+                    preRollHead = (preRollHead + 1) % PRE_ROLL_FRAMES;
+                    if (preRollCount < PRE_ROLL_FRAMES) preRollCount++;
+                }
+
+                // ── Skip VAD processing when idle ─────────────────────────────
+                if (!nowActive) continue;
+
+                // ── VAD + segmentation (ACTIVE mode only) ─────────────────────
+                if (useVAD) {
+                    // Amplitude gate — only pre-speech
+                    int effectiveThreshold = (int) Math.max(vadAmplitudeThreshold, adaptiveFloor * 1.5f);
+                    boolean vadSuppressed  = !inSpeech
+                            && (android.os.SystemClock.uptimeMillis() < vadSuppressedUntil);
+                    boolean loudEnough = inSpeech
+                            || (!vadSuppressed && rmsOf(frame, bytesRead) >= effectiveThreshold);
+                    boolean isSpeech   = loudEnough && vad.isSpeech(frame);
+
+                    if (isSpeech) {
+                        if (!inSpeech) {
+                            // Speech onset — prepend tail overlap then pre-roll
+                            if (tailOverlapBuffer != null) {
+                                segment.write(tailOverlapBuffer, 0, tailOverlapBuffer.length);
+                                tailOverlapBuffer = null;
                             }
+                            if (preRollCount > 0) {
+                                int start = preRollCount < PRE_ROLL_FRAMES
+                                        ? 0 : (preRollHead % PRE_ROLL_FRAMES);
+                                for (int i = 0; i < preRollCount; i++) {
+                                    segment.write(preRoll[(start + i) % PRE_ROLL_FRAMES],
+                                            0, VAD_FRAME_BYTES);
+                                }
+                            }
+                            inSpeech  = true;
+                            hadSpeech = true;
+                            silentFrames = 0;
+                            adaptiveFloor = 0f;
+                            sendUpdate(MSG_RECORDING);
                         }
-                        inSpeech = true;
-                        hadSpeech = true;
-                        silentFrames = 0;
-                        // Reset adaptive noise floor at speech onset — the energy spike
-                        // from recording would skew the floor calculation.
-                        adaptiveNoiseFloor = 0f;
-                        sendUpdate(MSG_RECORDING);
-                        Log.d(TAG, "Speech onset (pre-roll=" + preRollCount + " tail=" + (tailOverlapBuffer != null ? "yes" : "no") + ")");
-                    }
-                    segment.write(frame, 0, bytesRead);
-                    silentFrames = 0;
-
-                    // Hard limit: force-end if segment is getting too long
-                    if (segment.size() >= MAX_SEGMENT_BYTES) {
-                        Log.d(TAG, "Max segment length reached — flushing");
-                        flushSegment(segment, TAIL_OVERLAP_FRAMES);
-                        inSpeech = false;
-                        silentFrames = 0;
-                    }
-                } else {
-                    if (inSpeech) {
-                        // Silence detected after speech — write trailing silence for context,
-                        // then flush the completed segment.
                         segment.write(frame, 0, bytesRead);
-                        inSpeech = false;
-                        flushSegment(segment, TAIL_OVERLAP_FRAMES);
                         silentFrames = 0;
-                    } else {
-                        silentFrames++;
-                        // Update pre-roll ring buffer (also stores silence → speech transition)
-                        System.arraycopy(frame, 0, preRoll[preRollHead % PRE_ROLL_FRAMES], 0, VAD_FRAME_BYTES);
-                        preRollHead = (preRollHead + 1) % PRE_ROLL_FRAMES;
-                        if (preRollCount < PRE_ROLL_FRAMES) preRollCount++;
 
-                        // Adaptive noise floor: update running average of silence energy.
-                        // This tracks the current ambient noise level so the effective
-                        // threshold rises automatically in noisier environments.
-                        int frameRms = rmsOf(frame, bytesRead);
-                        adaptiveNoiseFloor = adaptiveNoiseFloor * (1f - NOISE_FLOOR_ALPHA)
-                                + frameRms * NOISE_FLOOR_ALPHA;
-
-                        // 30s without ANY speech: fire timeout
-                        if (!hadSpeech && silentFrames >= TIMEOUT_FRAMES) {
-                            Log.d(TAG, "VAD timeout — no speech in 30s");
-                            sendUpdate(MSG_VAD_TIMEOUT);
+                        if (segment.size() >= MAX_SEGMENT_BYTES) {
+                            tailOverlapBuffer = flushSegment(segment, TAIL_OVERLAP_FRAMES);
+                            inSpeech = false;
                             silentFrames = 0;
                         }
+                    } else {
+                        if (inSpeech) {
+                            segment.write(frame, 0, bytesRead);
+                            inSpeech = false;
+                            tailOverlapBuffer = flushSegment(segment, TAIL_OVERLAP_FRAMES);
+                            silentFrames = 0;
+                        } else {
+                            silentFrames++;
+                            // Adaptive noise floor
+                            int frameRms = rmsOf(frame, bytesRead);
+                            adaptiveFloor = adaptiveFloor * (1f - 0.05f) + frameRms * 0.05f;
+
+                            if (!hadSpeech && silentFrames >= TIMEOUT_FRAMES) {
+                                Log.d(TAG, "VAD timeout — no speech in 30s");
+                                sendUpdate(MSG_VAD_TIMEOUT);
+                                silentFrames = 0;
+                            }
+                        }
+                    }
+                } else {
+                    // Non-VAD mode: accumulate everything
+                    if (!inSpeech) {
+                        sendUpdate(MSG_RECORDING);
+                        inSpeech  = true;
+                        hadSpeech = true;
+                    }
+                    segment.write(frame, 0, bytesRead);
+                    if (segment.size() >= MAX_SEGMENT_BYTES) {
+                        tailOverlapBuffer = flushSegment(segment, TAIL_OVERLAP_FRAMES);
                     }
                 }
-            } else {
-                // Non-VAD mode: accumulate everything, no segmentation
-                if (!inSpeech) {
-                    sendUpdate(MSG_RECORDING);
-                    inSpeech = true;
-                    hadSpeech = true;
-                }
-                segment.write(frame, 0, bytesRead);
-                if (segment.size() >= MAX_SEGMENT_BYTES) {
-                    flushSegment(segment, TAIL_OVERLAP_FRAMES);
-                }
             }
+        } catch (Exception e) {
+            Log.e(TAG, "Error in continuous read loop", e);
+            sendUpdate(MSG_RECORDING_ERROR);
+        } finally {
+            mStreamOpen.set(false);
+            mSessionActive.set(false);
+            try { ar.stop(); } catch (Exception ignored) {}
+            ar.release();
+            mAudioRecord = null;
+            if (vad != null) { vad.close(); vad = null; }
+            abandonAudioFocus();
+            synchronized (stopLock) { stopLock.notifyAll(); }
+            Log.d(TAG, "AudioRecord released — stream closed");
         }
-
-        // ── Session ended (stop() was called) ────────────────────────────────
-        // Flush any partial segment
-        if (inSpeech && segment.size() > MIN_SEGMENT_BYTES) {
-            Log.d(TAG, "Flushing partial segment on stop: " + segment.size() + " bytes");
-            flushSegment(segment, 0); // no tail overlap needed at session end
-        }
-        // Clear tail overlap buffer — won't be used after session ends
-        tailOverlapBuffer = null;
-        adaptiveNoiseFloor = 0f;
-
-        if (useVAD) {
-            useVAD = false;
-            vad.close();
-            vad = null;
-        }
-        audioRecord.stop();
-        audioRecord.release();
-        abandonAudioFocus();
-        Log.d(TAG, "AudioRecord released — session ended");
     }
 
     /**
-     * Write the accumulated segment to RecordBuffer and signal MSG_RECORDING_DONE.
-     * Saves the last tailFrames frames as tail overlap for the next segment.
-     * AudioRecord continues running — this is NOT a stop/start cycle.
-     *
-     * @param segment    the accumulated audio for this speech segment
-     * @param tailFrames how many frames from the end to save as tail overlap (0 = none)
+     * Flush the accumulated segment to RecordBuffer and signal MSG_RECORDING_DONE.
+     * Returns the tail overlap bytes (last tailFrames frames) for the next segment,
+     * or null if tailFrames is 0.
+     * AudioRecord keeps running — this is not a stop event.
      */
-    private void flushSegment(ByteArrayOutputStream segment, int tailFrames) {
+    private byte[] flushSegment(ByteArrayOutputStream segment, int tailFrames) {
         byte[] audio = segment.toByteArray();
         segment.reset();
 
         if (audio.length < MIN_SEGMENT_BYTES) {
             Log.d(TAG, "Segment too short (" + audio.length + " bytes) — discarding");
             sendUpdate(MSG_RECORDING_ERROR);
-            return;
+            return null;
         }
 
-        // Save tail overlap for the next segment
+        byte[] tail = null;
         if (tailFrames > 0) {
             int tailBytes = Math.min(tailFrames * VAD_FRAME_BYTES, audio.length);
-            tailOverlapBuffer = new byte[tailBytes];
-            System.arraycopy(audio, audio.length - tailBytes, tailOverlapBuffer, 0, tailBytes);
+            tail = new byte[tailBytes];
+            System.arraycopy(audio, audio.length - tailBytes, tail, 0, tailBytes);
         }
 
         RecordBuffer.setOutputBuffer(audio);
-        // MSG_RECORDING_DONE signals the IME to process this segment.
-        // AudioRecord continues running for the next sentence.
         sendUpdate(MSG_RECORDING_DONE);
+        return tail;
     }
 
     private void requestAudioFocus() {
@@ -500,12 +555,6 @@ public class Recorder {
         } else {
             //noinspection deprecation
             mAudioManager.abandonAudioFocus(null);
-        }
-    }
-
-    private void notifyStopWaiters() {
-        synchronized (stopLock) {
-            stopLock.notifyAll();
         }
     }
 

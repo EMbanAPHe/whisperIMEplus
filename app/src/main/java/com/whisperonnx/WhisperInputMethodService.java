@@ -324,7 +324,7 @@ public class WhisperInputMethodService extends InputMethodService {
             final Recorder recRef = mRecorder;
             if (!stopExecutor.isShutdown()) {
                 stopExecutor.execute(() -> {
-                    if (recRef.isInProgress()) recRef.stop();
+                    if (recRef.isSessionActive()) recRef.stop();
                     recRef.shutdown();
                 });
             } else {
@@ -1119,17 +1119,13 @@ public class WhisperInputMethodService extends InputMethodService {
             resetProgressUi();
         });
 
-        if (mRecorder.isInProgress()) {
-            // Old recording is still running (e.g. keyboard closed mid-recording
-            // and RecorderStopper has not yet executed). We cannot call
-            // mRecorder.start() — compareAndSet would fail silently and we'd
-            // never capture any audio for this session.
-            //
-            // Park the intent: RecorderStopper will call handler.post() after
-            // the old recording stops, which will start the new recording then.
-            // activeRecordingSessionId is deliberately NOT stamped here —
-            // it will be stamped in that deferred start so MSG_RECORDING_DONE
-            // from the old recording cannot pass the session guard.
+        if (mRecorder.isSessionActive()) {
+            // A session is actively recording. We cannot call start() until the
+            // current session has stopped (stop() set mSessionActive=false and
+            // notified). Park the intent — the RecorderStopper thread's handler.post
+            // will start the new session after stop() returns.
+            // Note: isSessionActive() not isInProgress() — the stream being open
+            // but idle does NOT require deferral; start() handles that fine.
             if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "startRecordingSession: recorder busy, deferring sid=" + sid);
             pendingStartSessionId = sid;
             pendingStartVad       = useVad;
@@ -1174,7 +1170,7 @@ public class WhisperInputMethodService extends InputMethodService {
             final boolean vad  = continuousMode;
             if (!stopExecutor.isShutdown()) {
                 stopExecutor.execute(() -> {
-                    if (r.isInProgress()) r.stop();
+                    if (r.isSessionActive()) r.stop();
                     handler.post(() -> {
                         if (sessionGen != curSid || !isListening || cancelRequested) return;
                         activeRecordingSessionId = curSid;
@@ -1186,7 +1182,7 @@ public class WhisperInputMethodService extends InputMethodService {
             } else {
                 // Executor shut down (only during service teardown) — use a raw thread
                 final Thread t = new Thread(() -> {
-                    if (r.isInProgress()) r.stop();
+                    if (r.isSessionActive()) r.stop();
                     handler.post(() -> {
                         if (sessionGen != curSid || !isListening || cancelRequested) return;
                         activeRecordingSessionId = curSid;
@@ -1387,9 +1383,9 @@ public class WhisperInputMethodService extends InputMethodService {
         if (mRecorder != null) {
             final Recorder r = mRecorder;
             if (!stopExecutor.isShutdown()) {
-                stopExecutor.execute(() -> { if (r.isInProgress()) r.stop(); });
+                stopExecutor.execute(() -> { if (r.isSessionActive()) r.stop(); });
             } else {
-                if (r.isInProgress()) {
+                if (r.isSessionActive()) {
                     Thread t = new Thread(r::stop, "RecorderStopper-fallback");
                     t.setDaemon(true);
                     t.start();
@@ -1462,7 +1458,7 @@ public class WhisperInputMethodService extends InputMethodService {
                         // becomes available again.  After stopping, post to the main
                         // thread to execute any deferred session start that was
                         // parked by startRecordingSession().
-                        if (r.isInProgress()) r.stop();
+                        if (r.isSessionActive()) r.stop(); // only stop if session active, not just stream open
                         handler.post(() -> {
                             int pending = pendingStartSessionId;
                             if (pending != 0 && !cancelRequested && isListening
@@ -1486,7 +1482,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                 }
             } else {
-                if (mRecorder.isInProgress()) mRecorder.stop();
+                if (mRecorder.isSessionActive()) mRecorder.stop();
             }
         }
 
