@@ -230,8 +230,14 @@ public class Whisper {
         final Recognizer r = recognizer;
         try {
             if (r != null && RecordBuffer.getOutputBuffer() != null && mAction != null) {
-                startTime = android.os.SystemClock.elapsedRealtime(); // monotonic — unaffected by clock changes
-                r.recognize(RecordBuffer.getSamples(), 1, mLangCode, mAction);
+                startTime = android.os.SystemClock.elapsedRealtime();
+                float[] samples = RecordBuffer.getSamples();
+                // Zero the raw byte buffer immediately after copying to float[] —
+                // the static buffer held the last segment's audio and could be read
+                // by a memory dump tool between sessions. The float[] samples is
+                // local to this stack frame and will be GC'd when inference ends.
+                RecordBuffer.clearBuffer();
+                r.recognize(samples, 1, mLangCode, mAction);
             } else {
                 Log.w(TAG, "Cannot transcribe: r=" + r + " action=" + mAction
                         + " buffer=" + (RecordBuffer.getOutputBuffer() != null));

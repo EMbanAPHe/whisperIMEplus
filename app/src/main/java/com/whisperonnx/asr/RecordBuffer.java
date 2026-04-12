@@ -17,6 +17,18 @@ public class RecordBuffer {
         return outputBuffer;
     }
 
+    /**
+     * Zeros and nulls the output buffer after inference has copied its contents.
+     * Prevents the previous segment's audio from persisting in the static field
+     * between sessions — a minor privacy improvement for memory-dump scenarios.
+     */
+    public static synchronized void clearBuffer() {
+        if (outputBuffer != null) {
+            java.util.Arrays.fill(outputBuffer, (byte) 0);
+            outputBuffer = null;
+        }
+    }
+
     public static float[] getSamples() {
 
         int numSamples = RecordBuffer.getOutputBuffer().length / 2;

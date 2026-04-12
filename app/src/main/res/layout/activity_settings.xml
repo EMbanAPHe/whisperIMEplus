@@ -269,6 +269,25 @@
                     android:text="Haptic Feedback on Recording" />
             </LinearLayout>
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:orientation="horizontal">
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_return_after_idle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:layout_marginStart="8dp"
+                    android:textSize="16sp"
+                    android:text="Return to Previous Keyboard After 10 Min Idle" />
+            </LinearLayout>
+
             <!-- ═══ Voice Input (Recognition Service) ═══ -->
             <TextView
                 android:layout_width="match_parent"

@@ -87,7 +87,9 @@ import com.whisperonnx.utils.HapticFeedback;
  */
 public class WhisperInputMethodService extends InputMethodService {
 
-    private static final String TAG = "WhisperIME";
+    private static final String TAG            = "WhisperIME";
+    private static final String PREF_LAST_CLOSE_TIME = "imeLastCloseTimeMs";
+    private static final long   IDLE_TIMEOUT_MS      = 10L * 60 * 1000; // 10 minutes
 
     // ── Widgets — assigned in onCreateInputView, null before first inflation ─
     private ImageButton  btnRecord;
@@ -194,6 +196,16 @@ public class WhisperInputMethodService extends InputMethodService {
     private boolean prefAutoSend;
     /** If false, suppress the end-of-recording haptic pulse in streaming mode. */
     private boolean prefHapticRecording;
+    /**
+     * When true, the next onStartInputView auto-start is suppressed.
+     * Set by: Cancel button, mic button (stop), keyboard close mid-session.
+     * Cleared by: mic button tap (deliberate record), or when a different editor
+     * is focused (different packageName or fieldId than the last cancel).
+     * This prevents the pattern: cancel → send → keyboard re-shown → auto-records.
+     */
+    private boolean suppressNextAutoStart = false;
+    /** Package name + field ID at the time suppressNextAutoStart was set. */
+    private String  suppressedForEditor   = "";
     /**
      * Language detected in the first "auto" segment of the current session.
      * Subsequent segments use this language instead of re-running detection,
@@ -360,6 +372,18 @@ public class WhisperInputMethodService extends InputMethodService {
         restoreButtonState();
         resetProgressUi();
 
+        // Idle timeout: if the keyboard has been closed for > 10 minutes and the
+        // user enabled "Return to previous keyboard after idle", switch back now.
+        if (sp != null && sp.getBoolean("imeReturnAfterIdle", false)) {
+            long lastClose = sp.getLong(PREF_LAST_CLOSE_TIME, 0L);
+            if (lastClose > 0 && android.os.SystemClock.elapsedRealtime() - lastClose > IDLE_TIMEOUT_MS) {
+                sp.edit().putLong(PREF_LAST_CLOSE_TIME, 0L).apply(); // reset so it only fires once
+                Log.d(TAG, "Idle timeout reached — switching to previous input method");
+                switchToPreviousInputMethod();
+                return; // don't show our keyboard
+            }
+        }
+
         if (!modelReady) {
             if (tvStatus != null) {
                 tvStatus.setText(getString(R.string.loading_model));
@@ -369,12 +393,28 @@ public class WhisperInputMethodService extends InputMethodService {
         }
 
         if (prefAutoStart && !isListening) {
-            startRecordingSession(prefAutoStop);
+            String editorKey = currentEditorKey(attribute);
+            if (suppressNextAutoStart && suppressedForEditor.equals(editorKey)) {
+                // Same editor as when cancel was pressed — skip auto-start.
+                // The user will tap the mic when ready.
+                suppressNextAutoStart = false;
+                Log.d(TAG, "Auto-start suppressed for same editor after cancel");
+            } else {
+                // Different editor or suppression already consumed — auto-start normally.
+                suppressNextAutoStart = false;
+                startRecordingSession(prefAutoStop);
+            }
         }
     }
 
     @Override
     public void onFinishInputView(boolean finishingInput) {
+        // Record close timestamp for idle-timeout detection
+        if (sp != null) {
+            sp.edit().putLong(PREF_LAST_CLOSE_TIME,
+                    android.os.SystemClock.elapsedRealtime()).apply();
+        }
+
         // Stop transcription and recording immediately.
         if (mWhisper != null) stopTranscription();
         exitListeningMode(true);
@@ -470,6 +510,8 @@ public class WhisperInputMethodService extends InputMethodService {
                 // audio use the Cancel button instead.
                 stopListeningGracefully();
             } else {
+                // Deliberate tap — clear any pending suppression
+                suppressNextAutoStart = false;
                 if (!checkRecordPermission()) return;
                 if (!modelReady) {
                     if (tvStatus != null) {
@@ -1289,6 +1331,8 @@ public class WhisperInputMethodService extends InputMethodService {
 
         transcriptionHistory.clear(); // undo history doesn't survive a soft stop
         sessionLanguage = "";         // reset language lock so next session detects fresh
+        suppressNextAutoStart = true;
+        suppressedForEditor   = currentEditorKey();
 
         // If Whisper is processing or audio is queued, stay in LISTENING (dim)
         // state so the user sees the result is still pending.
@@ -1326,6 +1370,10 @@ public class WhisperInputMethodService extends InputMethodService {
         pendingStartSessionId = 0;   // cancel any deferred start
         transcriptionHistory.clear(); // undo history is session-scoped
         sessionLanguage       = "";   // reset language lock for next session
+        // Suppress auto-start for the next onStartInputView — prevents the pattern
+        // of cancel → send → keyboard re-shown → recording starts automatically.
+        suppressNextAutoStart = true;
+        suppressedForEditor   = currentEditorKey();
         final int sid         = ++sessionGen;
 
         if (mRecorder != null) {
@@ -1563,6 +1611,24 @@ public class WhisperInputMethodService extends InputMethodService {
                 .replaceAll("\\[[^\\]]*\\]", "") // remove [...]
                 .trim();
         return stripped.isEmpty();
+    }
+
+    /**
+     * Returns a stable key identifying the currently active editor.
+     * Used to distinguish "same field after send" from "new field focused".
+     * Combines the app package name with the field ID — two different text
+     * fields in the same app produce different keys.
+     */
+    private String currentEditorKey() {
+        EditorInfo ei = getCurrentInputEditorInfo();
+        if (ei == null) return "";
+        return (ei.packageName != null ? ei.packageName : "") + "/" + ei.fieldId;
+    }
+
+    /** Overload accepting an EditorInfo directly (used in onStartInputView). */
+    private String currentEditorKey(EditorInfo attribute) {
+        if (attribute == null) return "";
+        return (attribute.packageName != null ? attribute.packageName : "") + "/" + attribute.fieldId;
     }
 
     /**
