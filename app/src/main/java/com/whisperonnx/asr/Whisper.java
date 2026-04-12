@@ -29,6 +29,13 @@ public class Whisper {
     public static final String MSG_PROCESSING_DONE = "Processing done...!"; // used in RecognizerListener log
 
     private final AtomicBoolean mInProgress = new AtomicBoolean(false);
+    /**
+     * True from the moment r.recognize() is called until onSpeechRecognizedResult fires.
+     * Recognizer.recognize() spawns its own internal thread and returns immediately,
+     * so mInProgress goes false almost instantly — it cannot be used to test whether
+     * the recognizer has actually produced a result yet. resultPending fills that gap.
+     */
+    private final AtomicBoolean resultPending = new AtomicBoolean(false);
 
     private Recognizer.Action mAction;
     private String mLangCode = "";
@@ -204,6 +211,16 @@ public class Whisper {
         return mInProgress.get();
     }
 
+    /**
+     * True while the Recognizer's internal thread is still running and has not yet
+     * delivered its result. isInProgress() goes false almost immediately after
+     * r.recognize() is called (since Recognizer spawns its own thread and returns).
+     * Use this method — not isInProgress() — to test whether a result is still coming.
+     */
+    public boolean isResultPending() {
+        return resultPending.get();
+    }
+
     private void processRecordBufferLoop() {
         while (!Thread.currentThread().isInterrupted()) {
             taskLock.lock();
@@ -237,17 +254,17 @@ public class Whisper {
                 // by a memory dump tool between sessions. The float[] samples is
                 // local to this stack frame and will be GC'd when inference ends.
                 RecordBuffer.clearBuffer();
+                resultPending.set(true); // cleared in sendResult after callback fires
                 r.recognize(samples, 1, mLangCode, mAction);
             } else {
                 Log.w(TAG, "Cannot transcribe: r=" + r + " action=" + mAction
                         + " buffer=" + (RecordBuffer.getOutputBuffer() != null));
+                resultPending.set(false);
                 sendResult(new WhisperResult("", "", mAction)); // reset IME UI
             }
         } catch (Exception e) {
             Log.e(TAG, "Error during transcription", e);
-            // sendUpdate is a no-op for text messages in the IME listener, but
-            // we still call onResultReceived with an empty result so the IME
-            // can reset its progress UI — otherwise the spinner never clears.
+            resultPending.set(false);
             sendResult(new WhisperResult("", "", mAction));
         } finally {
             mInProgress.set(false);
@@ -261,6 +278,7 @@ public class Whisper {
     }
 
     private void sendResult(WhisperResult whisperResult) {
+        resultPending.set(false); // clear before callback so isResultPending() is accurate
         if (mUpdateListener != null) {
             mUpdateListener.onResultReceived(whisperResult);
         }

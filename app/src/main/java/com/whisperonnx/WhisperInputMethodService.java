@@ -540,13 +540,14 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                     return;
                 }
-                // If Whisper is mid-inference from a just-stopped session, wait for it
-                // to finish committing before starting a new session. Starting immediately
-                // would increment sessionGen and discard the in-flight result.
-                if (mWhisper != null && mWhisper.isInProgress()) {
+                // If the recognizer is still producing a result from the last session,
+                // wait for it to finish before starting a new one. isResultPending()
+                // stays true until onSpeechRecognizedResult fires — unlike isInProgress()
+                // which clears almost immediately because Recognizer spawns its own thread.
+                if (mWhisper != null && mWhisper.isResultPending()) {
                     startAfterWhisper = true;
                     if (Log.isLoggable(TAG, Log.DEBUG))
-                        Log.d(TAG, "Mic tapped while Whisper processing — deferring start");
+                        Log.d(TAG, "Mic tapped while result pending — deferring start");
                 } else {
                     startRecordingSession(prefAutoStop);
                 }
@@ -933,7 +934,7 @@ public class WhisperInputMethodService extends InputMethodService {
                     // started Whisper. Calling it again would be a no-op (isInProgress
                     // guard inside) but it's cleaner to check here.
                     handler.post(() -> {
-                        if (mWhisper != null && !mWhisper.isInProgress()) {
+                        if (mWhisper != null && !mWhisper.isInProgress() && !mWhisper.isResultPending()) {
                             processNextQueued();
                         }
                     });
