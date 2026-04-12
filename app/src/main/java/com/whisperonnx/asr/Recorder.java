@@ -236,6 +236,23 @@ public class Recorder {
                 lock.unlock();
             }
 
+            // Re-assert mInProgress=true immediately before starting the session.
+            //
+            // Race this prevents:
+            //   1. Old session runs, mInProgress=true
+            //   2. stop() → mInProgress.set(false) → waits on stopLock
+            //   3. Old session exits its while loop, cleans up
+            //   4. start() → compareAndSet(false,true) → succeeds, shouldStartRecording=true
+            //   5. Old session's recordLoop finally → mInProgress.set(false) ← OVERWRITES step 4
+            //   6. Worker loops, finds shouldStartRecording=true, calls recordSession()
+            //   7. recordSession()'s while(mInProgress.get()) → false → exits immediately
+            //   → New recording captures nothing
+            //
+            // Setting true here (after consuming shouldStartRecording, before calling
+            // recordSession) ensures the new session's while loop sees the correct state
+            // regardless of what the previous finally did.
+            mInProgress.set(true);
+
             try {
                 recordSession();
             } catch (Exception e) {
