@@ -110,6 +110,11 @@ public class Whisper {
             public void onSpeechRecognizedResult(String text, String languageCode,
                     double confidenceScore, boolean isFinal) {
                 Log.d(TAG, languageCode + " " + text);
+                // Cache the detected language so the IME can lock subsequent segments
+                if (languageCode != null && !languageCode.isEmpty()
+                        && !languageCode.equals("??") && !languageCode.equals("auto")) {
+                    mDetectedLanguage = languageCode;
+                }
                 WhisperResult whisperResult = new WhisperResult(text, languageCode, mAction);
                 sendResult(whisperResult);
                 long timeTaken = android.os.SystemClock.elapsedRealtime() - startTime;
@@ -169,6 +174,13 @@ public class Whisper {
     public void setLanguage(String language) {
         this.mLangCode = language;
     }
+
+    /** Returns the language code detected in the most recent transcription ("" if none yet). */
+    public String getDetectedLanguage() {
+        return mDetectedLanguage;
+    }
+
+    private volatile String mDetectedLanguage = "";
 
     public void start() {
         if (!mInProgress.compareAndSet(false, true)) {

@@ -91,6 +91,12 @@ public class Recorder {
     // Minimum segment length (100ms) — anything shorter is likely a false trigger
     private static final int MIN_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE / 10;
 
+    // Tail overlap: append this many frames from the END of each segment to the
+    // START of the next. Prevents boundary words from being cut off when a phoneme
+    // falls exactly at the moment VAD transitions from speech to silence.
+    // 300ms = ~10 frames at 16kHz/30ms-per-frame
+    private static final int TAIL_OVERLAP_FRAMES = 10;
+
     private final Context mContext;
     private final AudioManager mAudioManager;
     private AudioFocusRequest mAudioFocusRequest = null;
@@ -112,6 +118,21 @@ public class Recorder {
     private volatile int     vadAmplitudeThreshold = 300;
     private volatile long    vadSuppressedUntil    = 0L;
     private VadWebRTC vad = null;
+
+    /**
+     * Tail overlap: last TAIL_OVERLAP_FRAMES frames from the most recently flushed
+     * segment. Prepended to the next speech segment to avoid boundary word loss.
+     */
+    private byte[] tailOverlapBuffer = null;
+
+    /**
+     * Adaptive noise floor: running average of silence-frame RMS values, used to
+     * dynamically raise the amplitude gate when the environment is noisier than
+     * the user's static threshold setting. Prevents false triggers in variable
+     * noise environments without requiring manual re-adjustment of the slider.
+     */
+    private float adaptiveNoiseFloor = 0f;
+    private static final float NOISE_FLOOR_ALPHA = 0.05f; // EMA coefficient
 
     private SharedPreferences sp;
     private final Thread workerThread;
@@ -292,13 +313,24 @@ public class Recorder {
                 // Amplitude gate — only pre-speech
                 boolean vadSuppressed = !inSpeech
                         && (android.os.SystemClock.uptimeMillis() < vadSuppressedUntil);
+                // Use whichever is higher: user's static threshold or adaptive noise floor.
+                // The adaptive floor rises gradually in noisy environments, preventing
+                // false triggers when ambient noise exceeds the user's slider setting.
+                int effectiveThreshold = (int) Math.max(vadAmplitudeThreshold, adaptiveNoiseFloor * 1.5f);
                 boolean loudEnough = inSpeech
-                        || (!vadSuppressed && rmsOf(frame, bytesRead) >= vadAmplitudeThreshold);
+                        || (!vadSuppressed && rmsOf(frame, bytesRead) >= effectiveThreshold);
                 boolean isSpeech = loudEnough && vad.isSpeech(frame);
 
                 if (isSpeech) {
                     if (!inSpeech) {
-                        // Speech onset — prepend pre-roll to capture consonant onset
+                        // Speech onset — prepend tail overlap from previous segment (if any),
+                        // then the pre-roll buffer. This ensures:
+                        //   • Boundary words from the previous segment are repeated for context
+                        //   • Consonant onset of the current segment is not clipped by VAD delay
+                        if (tailOverlapBuffer != null) {
+                            segment.write(tailOverlapBuffer, 0, tailOverlapBuffer.length);
+                            tailOverlapBuffer = null;
+                        }
                         if (preRollCount > 0) {
                             int start = preRollCount < PRE_ROLL_FRAMES
                                     ? 0
@@ -310,8 +342,11 @@ public class Recorder {
                         inSpeech = true;
                         hadSpeech = true;
                         silentFrames = 0;
+                        // Reset adaptive noise floor at speech onset — the energy spike
+                        // from recording would skew the floor calculation.
+                        adaptiveNoiseFloor = 0f;
                         sendUpdate(MSG_RECORDING);
-                        Log.d(TAG, "Speech onset (with " + preRollCount + " pre-roll frames)");
+                        Log.d(TAG, "Speech onset (pre-roll=" + preRollCount + " tail=" + (tailOverlapBuffer != null ? "yes" : "no") + ")");
                     }
                     segment.write(frame, 0, bytesRead);
                     silentFrames = 0;
@@ -319,34 +354,36 @@ public class Recorder {
                     // Hard limit: force-end if segment is getting too long
                     if (segment.size() >= MAX_SEGMENT_BYTES) {
                         Log.d(TAG, "Max segment length reached — flushing");
-                        flushSegment(segment);
+                        flushSegment(segment, TAIL_OVERLAP_FRAMES);
                         inSpeech = false;
                         silentFrames = 0;
                     }
                 } else {
                     if (inSpeech) {
-                        // Still in the silence extension period — write trailing silence
+                        // Silence detected after speech — write trailing silence for context,
+                        // then flush the completed segment.
                         segment.write(frame, 0, bytesRead);
-                        silentFrames++;
-                        // VAD's silenceDurationMs controls when it transitions out of SPEECH.
-                        // Once isSpeech returns false, that already accounts for silence duration.
-                        // Flush immediately.
                         inSpeech = false;
-                        flushSegment(segment);
+                        flushSegment(segment, TAIL_OVERLAP_FRAMES);
                         silentFrames = 0;
                     } else {
                         silentFrames++;
-                        // Update pre-roll ring buffer with silence frames too —
-                        // pre-roll includes the transition period into speech
+                        // Update pre-roll ring buffer (also stores silence → speech transition)
                         System.arraycopy(frame, 0, preRoll[preRollHead % PRE_ROLL_FRAMES], 0, VAD_FRAME_BYTES);
                         preRollHead = (preRollHead + 1) % PRE_ROLL_FRAMES;
                         if (preRollCount < PRE_ROLL_FRAMES) preRollCount++;
+
+                        // Adaptive noise floor: update running average of silence energy.
+                        // This tracks the current ambient noise level so the effective
+                        // threshold rises automatically in noisier environments.
+                        int frameRms = rmsOf(frame, bytesRead);
+                        adaptiveNoiseFloor = adaptiveNoiseFloor * (1f - NOISE_FLOOR_ALPHA)
+                                + frameRms * NOISE_FLOOR_ALPHA;
 
                         // 30s without ANY speech: fire timeout
                         if (!hadSpeech && silentFrames >= TIMEOUT_FRAMES) {
                             Log.d(TAG, "VAD timeout — no speech in 30s");
                             sendUpdate(MSG_VAD_TIMEOUT);
-                            // Reset for next 30s window — don't stop AudioRecord
                             silentFrames = 0;
                         }
                     }
@@ -360,7 +397,7 @@ public class Recorder {
                 }
                 segment.write(frame, 0, bytesRead);
                 if (segment.size() >= MAX_SEGMENT_BYTES) {
-                    flushSegment(segment);
+                    flushSegment(segment, TAIL_OVERLAP_FRAMES);
                 }
             }
         }
@@ -369,8 +406,11 @@ public class Recorder {
         // Flush any partial segment
         if (inSpeech && segment.size() > MIN_SEGMENT_BYTES) {
             Log.d(TAG, "Flushing partial segment on stop: " + segment.size() + " bytes");
-            flushSegment(segment);
+            flushSegment(segment, 0); // no tail overlap needed at session end
         }
+        // Clear tail overlap buffer — won't be used after session ends
+        tailOverlapBuffer = null;
+        adaptiveNoiseFloor = 0f;
 
         if (useVAD) {
             useVAD = false;
@@ -385,10 +425,13 @@ public class Recorder {
 
     /**
      * Write the accumulated segment to RecordBuffer and signal MSG_RECORDING_DONE.
-     * Resets the segment stream for the next utterance.
+     * Saves the last tailFrames frames as tail overlap for the next segment.
      * AudioRecord continues running — this is NOT a stop/start cycle.
+     *
+     * @param segment    the accumulated audio for this speech segment
+     * @param tailFrames how many frames from the end to save as tail overlap (0 = none)
      */
-    private void flushSegment(ByteArrayOutputStream segment) {
+    private void flushSegment(ByteArrayOutputStream segment, int tailFrames) {
         byte[] audio = segment.toByteArray();
         segment.reset();
 
@@ -398,10 +441,16 @@ public class Recorder {
             return;
         }
 
+        // Save tail overlap for the next segment
+        if (tailFrames > 0) {
+            int tailBytes = Math.min(tailFrames * VAD_FRAME_BYTES, audio.length);
+            tailOverlapBuffer = new byte[tailBytes];
+            System.arraycopy(audio, audio.length - tailBytes, tailOverlapBuffer, 0, tailBytes);
+        }
+
         RecordBuffer.setOutputBuffer(audio);
-        // IMPORTANT: MSG_RECORDING_DONE is sent AFTER the buffer is written and
-        // BEFORE AudioRecord is stopped — the IME must NOT call stop() in response
-        // to this message. It only needs to process the audio. AudioRecord continues.
+        // MSG_RECORDING_DONE signals the IME to process this segment.
+        // AudioRecord continues running for the next sentence.
         sendUpdate(MSG_RECORDING_DONE);
     }
 
