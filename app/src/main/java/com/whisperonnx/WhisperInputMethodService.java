@@ -63,9 +63,8 @@ import com.whisperonnx.utils.HapticFeedback;
  *   RecorderListener callbacks  → Recorder worker thread  → UI via handler
  *   WhisperListener callbacks   → Whisper inference thread → UI via handler
  *   InputConnection.commitText()  safe from any thread (Android docs)
- *   Recorder.stop() blocks for ≤ one audio frame (~30 ms) under normal use.
- *   It is called synchronously from the recording thread's callbacks and
- *   asynchronously (new Thread) everywhere else to avoid stalling the UI.
+ *   Recorder.stop() is fire-and-forget (returns instantly).
+ *   AudioRecord stays open between sessions within one keyboard show.
  *
  * Mic button — three visual states
  *   IDLE       rounded_button_tonal       dark grey    not listening
@@ -318,24 +317,11 @@ public class WhisperInputMethodService extends InputMethodService {
         cancelRequested = true;
         continuousMode  = false;
         audioQueue.clear();
-        // Stop recorder on background thread to avoid blocking main thread for up to
-        // STOP_TIMEOUT_MS (3 s), which could trigger an ANR in onDestroy().
+        // stop() and closeStream() are now instant (fire-and-forget) — safe on main thread.
         if (mRecorder != null) {
-            final Recorder recRef = mRecorder;
-            if (!stopExecutor.isShutdown()) {
-                stopExecutor.execute(() -> {
-                    if (recRef.isSessionActive()) recRef.stop();
-                    recRef.shutdown();
-                });
-            } else {
-                // Executor already stopped — fall back to a raw thread
-                final Thread t = new Thread(() -> {
-                    if (recRef.isInProgress()) recRef.stop();
-                    recRef.shutdown();
-                }, "RecorderDestroy");
-                t.setDaemon(true);
-                t.start();
-            }
+            mRecorder.stop();
+            mRecorder.closeStream();
+            mRecorder.shutdown();
         }
 
         // Stop Whisper inference before releasing the model.
@@ -345,12 +331,7 @@ public class WhisperInputMethodService extends InputMethodService {
             mWhisper = null;
         }
 
-        // super.onDestroy() internally calls finishViews() → doFinishInput()
-        // → onFinishInputView() → exitListeningMode() → stopExecutor.execute().
-        // The executor MUST still be alive here, so shutdownNow() comes AFTER.
         super.onDestroy();
-
-        // Now safe — no more tasks will be submitted after this point.
         stopExecutor.shutdownNow();
     }
 
@@ -400,6 +381,11 @@ public class WhisperInputMethodService extends InputMethodService {
             }
         }
 
+        // Warm up AudioRecord now so the first start() has no initialization gap.
+        // openStream() opens the mic hardware immediately; pre-roll starts filling.
+        // closeStream() is called from onFinishInputView when the keyboard hides.
+        if (mRecorder != null) mRecorder.openStream();
+
         if (!modelReady) {
             if (tvStatus != null) {
                 tvStatus.setText(getString(R.string.loading_model));
@@ -435,9 +421,10 @@ public class WhisperInputMethodService extends InputMethodService {
                     android.os.SystemClock.elapsedRealtime()).apply();
         }
 
-        // Stop transcription and recording immediately.
+        // Stop transcription, end session, and release the mic.
         if (mWhisper != null) stopTranscription();
         exitListeningMode(true);
+        if (mRecorder != null) mRecorder.closeStream(); // release mic when keyboard hides
 
         // Cancel any pending long-press repeat Runnables.
         if (delInitial    != null) { handler.removeCallbacks(delInitial);    delInitial    = null; }
@@ -1119,23 +1106,13 @@ public class WhisperInputMethodService extends InputMethodService {
             resetProgressUi();
         });
 
-        if (mRecorder.isSessionActive()) {
-            // A session is actively recording. We cannot call start() until the
-            // current session has stopped (stop() set mSessionActive=false and
-            // notified). Park the intent — the RecorderStopper thread's handler.post
-            // will start the new session after stop() returns.
-            // Note: isSessionActive() not isInProgress() — the stream being open
-            // but idle does NOT require deferral; start() handles that fine.
-            if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "startRecordingSession: recorder busy, deferring sid=" + sid);
-            pendingStartSessionId = sid;
-            pendingStartVad       = useVad;
-        } else {
-            // Recorder is free — start immediately and stamp the session ID.
-            pendingStartSessionId = 0;
-            activeRecordingSessionId = sid;
-            if (useVad) mRecorder.initVad();
-            mRecorder.start();
-        }
+        // start() is fire-and-forget — safe to call even if a session is active.
+        // The Recorder's generation counter handles rapid stop→start by flushing
+        // the previous session's state cleanly before the new one begins.
+        pendingStartSessionId = 0;
+        activeRecordingSessionId = sid;
+        if (useVad) mRecorder.initVad();
+        mRecorder.start();
     }
 
     /**
@@ -1163,44 +1140,13 @@ public class WhisperInputMethodService extends InputMethodService {
         if (mWhisper != null) mWhisper.stop();
         resetProgressUi();
 
-        if (mRecorder.isInProgress()) {
-            // Stop current recording then restart within same session
-            final Recorder r   = mRecorder;
-            final int curSid   = sessionGen;
-            final boolean vad  = continuousMode;
-            if (!stopExecutor.isShutdown()) {
-                stopExecutor.execute(() -> {
-                    if (r.isSessionActive()) r.stop();
-                    handler.post(() -> {
-                        if (sessionGen != curSid || !isListening || cancelRequested) return;
-                        activeRecordingSessionId = curSid;
-                        if (vad) mRecorder.initVad();
-                        mRecorder.start();
-                        setMicState(MicState.LISTENING);
-                    });
-                });
-            } else {
-                // Executor shut down (only during service teardown) — use a raw thread
-                final Thread t = new Thread(() -> {
-                    if (r.isSessionActive()) r.stop();
-                    handler.post(() -> {
-                        if (sessionGen != curSid || !isListening || cancelRequested) return;
-                        activeRecordingSessionId = curSid;
-                        if (vad) mRecorder.initVad();
-                        mRecorder.start();
-                        setMicState(MicState.LISTENING);
-                    });
-                }, "RecorderStopper");
-                t.setDaemon(true);
-                t.start();
-            }
-        } else {
-            // Recorder idle — restart directly
-            activeRecordingSessionId = sessionGen;
-            if (continuousMode) mRecorder.initVad();
-            mRecorder.start();
-            setMicState(MicState.LISTENING);
-        }
+        // stop() is instant — stop current session and immediately start a new one.
+        // The generation counter in Recorder handles the flush of the discarded audio.
+        if (mRecorder.isSessionActive()) mRecorder.stop();
+        activeRecordingSessionId = sessionGen;
+        if (continuousMode) mRecorder.initVad();
+        mRecorder.start();
+        setMicState(MicState.LISTENING);
     }
 
     /**
@@ -1380,18 +1326,8 @@ public class WhisperInputMethodService extends InputMethodService {
         // all in-flight callbacks (MSG_RECORDING_DONE, onResultReceived) pass
         // their session guards and process normally.
 
-        if (mRecorder != null) {
-            final Recorder r = mRecorder;
-            if (!stopExecutor.isShutdown()) {
-                stopExecutor.execute(() -> { if (r.isSessionActive()) r.stop(); });
-            } else {
-                if (r.isSessionActive()) {
-                    Thread t = new Thread(r::stop, "RecorderStopper-fallback");
-                    t.setDaemon(true);
-                    t.start();
-                }
-            }
-        }
+        // stop() is fire-and-forget — call directly on main thread (returns instantly)
+        if (mRecorder != null && mRecorder.isSessionActive()) mRecorder.stop();
 
         transcriptionHistory.clear(); // undo history doesn't survive a soft stop
         sessionLanguage = "";         // reset language lock so next session detects fresh
@@ -1447,43 +1383,8 @@ public class WhisperInputMethodService extends InputMethodService {
         final int sid         = ++sessionGen;
 
         if (mRecorder != null) {
-            if (async) {
-                final Recorder r = mRecorder;
-                if (!stopExecutor.isShutdown()) {
-                    stopExecutor.execute(() -> {
-                        // Always stop the old recording regardless of session.
-                        // If a new session started before this runs, its
-                        // mRecorder.start() failed silently (compareAndSet returned
-                        // false). The old recording MUST be stopped so the recorder
-                        // becomes available again.  After stopping, post to the main
-                        // thread to execute any deferred session start that was
-                        // parked by startRecordingSession().
-                        if (r.isSessionActive()) r.stop(); // only stop if session active, not just stream open
-                        handler.post(() -> {
-                            int pending = pendingStartSessionId;
-                            if (pending != 0 && !cancelRequested && isListening
-                                    && sessionGen == pending) {
-                                // A new session was started but had to defer its
-                                // mRecorder.start() because the recorder was busy.
-                                // Now the recorder is free — start it properly.
-                                pendingStartSessionId    = 0;
-                                activeRecordingSessionId = pending;
-                                if (pendingStartVad) mRecorder.initVad();
-                                mRecorder.start();
-                                if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "Deferred recorder start for sid=" + pending);
-                            }
-                        });
-                    });
-                } else {
-                    if (r.isInProgress()) {
-                        Thread t = new Thread(r::stop, "RecorderStopper-exit-fallback");
-                        t.setDaemon(true);
-                        t.start();
-                    }
-                }
-            } else {
-                if (mRecorder.isSessionActive()) mRecorder.stop();
-            }
+            // stop() is instant — call directly regardless of async flag.
+            if (mRecorder != null && mRecorder.isSessionActive()) mRecorder.stop();
         }
 
         handler.post(() -> {
