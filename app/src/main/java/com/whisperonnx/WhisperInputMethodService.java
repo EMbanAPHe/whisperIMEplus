@@ -197,6 +197,12 @@ public class WhisperInputMethodService extends InputMethodService {
     /** If false, suppress the end-of-recording haptic pulse in streaming mode. */
     private boolean prefHapticRecording;
     /**
+     * If false, do not auto-capitalise the first letter of each transcription segment.
+     * Whisper's Recognizer always capitalises — we undo it here when this is false.
+     * Useful when dictating mid-sentence fragments or keywords without sentence structure.
+     */
+    private boolean prefAutoCapitalise;
+    /**
      * When true, the next onStartInputView auto-start is suppressed.
      * Set by: Cancel button, mic button (stop), keyboard close mid-session.
      * Cleared by: mic button tap (deliberate record), or when a different editor
@@ -206,6 +212,16 @@ public class WhisperInputMethodService extends InputMethodService {
     private boolean suppressNextAutoStart = false;
     /** Package name + field ID at the time suppressNextAutoStart was set. */
     private String  suppressedForEditor   = "";
+    /** Uptime when suppression was set — expires after SUPPRESS_TIMEOUT_MS. */
+    private long    suppressSetAt         = 0L;
+    /** Max time (ms) suppression is active. After this, auto-start resumes normally. */
+    private static final long SUPPRESS_TIMEOUT_MS = 8_000L;
+    /**
+     * Set when the user taps the mic button to START while Whisper is still
+     * processing the last segment. The new session is deferred until
+     * onResultReceived commits the result, then auto-starts.
+     */
+    private volatile boolean startAfterWhisper = false;
     /**
      * Language detected in the first "auto" segment of the current session.
      * Subsequent segments use this language instead of re-running detection,
@@ -394,13 +410,17 @@ public class WhisperInputMethodService extends InputMethodService {
 
         if (prefAutoStart && !isListening) {
             String editorKey = currentEditorKey(attribute);
-            if (suppressNextAutoStart && suppressedForEditor.equals(editorKey)) {
-                // Same editor as when cancel was pressed — skip auto-start.
-                // The user will tap the mic when ready.
+            long suppressAge = android.os.SystemClock.uptimeMillis() - suppressSetAt;
+            if (suppressNextAutoStart
+                    && suppressedForEditor.equals(editorKey)
+                    && suppressAge < SUPPRESS_TIMEOUT_MS) {
+                // Same editor, within the suppression window after an explicit cancel/stop.
+                // User deliberately stopped — don't auto-start. They can tap mic when ready.
                 suppressNextAutoStart = false;
-                Log.d(TAG, "Auto-start suppressed for same editor after cancel");
+                if (Log.isLoggable(TAG, Log.DEBUG))
+                    Log.d(TAG, "Auto-start suppressed (age=" + suppressAge + "ms)");
             } else {
-                // Different editor or suppression already consumed — auto-start normally.
+                // Different editor, or suppression expired, or never set — auto-start.
                 suppressNextAutoStart = false;
                 startRecordingSession(prefAutoStop);
             }
@@ -520,13 +540,26 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                     return;
                 }
-                startRecordingSession(prefAutoStop);
+                // If Whisper is mid-inference from a just-stopped session, wait for it
+                // to finish committing before starting a new session. Starting immediately
+                // would increment sessionGen and discard the in-flight result.
+                if (mWhisper != null && mWhisper.isInProgress()) {
+                    startAfterWhisper = true;
+                    if (Log.isLoggable(TAG, Log.DEBUG))
+                        Log.d(TAG, "Mic tapped while Whisper processing — deferring start");
+                } else {
+                    startRecordingSession(prefAutoStop);
+                }
             }
         });
 
         // ── Cancel — hard stop: discard everything, go idle ───────────────────
         btnCancel.setOnClickListener(v -> {
             tap(v);
+            // Set suppression BEFORE exitListeningMode so currentEditorKey() still works
+            suppressNextAutoStart = true;
+            suppressedForEditor   = currentEditorKey();
+            suppressSetAt         = android.os.SystemClock.uptimeMillis();
             if (mWhisper != null) stopTranscription();
             exitListeningMode(true);
         });
@@ -951,6 +984,14 @@ public class WhisperInputMethodService extends InputMethodService {
                     Log.d(TAG, "Session language locked to: " + sessionLanguage);
                 }
 
+                // Undo Recognizer's forced capitalisation if user prefers raw case.
+                // Recognizer.correctText() always uppercases the first character.
+                // When prefAutoCapitalise is false we lowercase it back.
+                if (!prefAutoCapitalise && result.length() > 0
+                        && Character.isUpperCase(result.charAt(0))) {
+                    result = Character.toLowerCase(result.charAt(0)) + result.substring(1);
+                }
+
                 // Commit text — guarded by session check on this thread
                 final String trimmed = result.trim();
                 // Whisper annotates non-speech audio with parenthetical/bracketed
@@ -1010,10 +1051,16 @@ public class WhisperInputMethodService extends InputMethodService {
                         // it will return here when done and reach the else branch.
                         processNextQueued();
                         if (!mWhisper.isInProgress()) {
-                            // Queue was empty — nothing started, go idle now.
-                            isListening = false;
-                            setMicState(MicState.IDLE);
-                            setCancelEnabled(false);
+                            // Queue was empty — nothing started.
+                            if (startAfterWhisper) {
+                                // User tapped mic while we were processing — start now.
+                                startAfterWhisper = false;
+                                startRecordingSession(prefAutoStop);
+                            } else {
+                                isListening = false;
+                                setMicState(MicState.IDLE);
+                                setCancelEnabled(false);
+                            }
                         }
                         // else: Whisper started on next queued segment; when it
                         // finishes onResultReceived fires again, hits this same
@@ -1333,6 +1380,7 @@ public class WhisperInputMethodService extends InputMethodService {
         sessionLanguage = "";         // reset language lock so next session detects fresh
         suppressNextAutoStart = true;
         suppressedForEditor   = currentEditorKey();
+        suppressSetAt         = android.os.SystemClock.uptimeMillis();
 
         // If Whisper is processing or audio is queued, stay in LISTENING (dim)
         // state so the user sees the result is still pending.
@@ -1368,12 +1416,14 @@ public class WhisperInputMethodService extends InputMethodService {
         isListening           = false;
         isRecording           = false;
         pendingStartSessionId = 0;   // cancel any deferred start
+        startAfterWhisper     = false; // cancel any deferred new session
         transcriptionHistory.clear(); // undo history is session-scoped
         sessionLanguage       = "";   // reset language lock for next session
-        // Suppress auto-start for the next onStartInputView — prevents the pattern
-        // of cancel → send → keyboard re-shown → recording starts automatically.
-        suppressNextAutoStart = true;
-        suppressedForEditor   = currentEditorKey();
+        // suppressNextAutoStart is intentionally NOT set here.
+        // exitListeningMode is called from onFinishInputView (keyboard close / app switch)
+        // as well as from explicit Cancel actions. Setting it here would block auto-start
+        // when returning to the same field after switching apps.
+        // Suppression is set explicitly by the Cancel button and stop button handlers.
         final int sid         = ++sessionGen;
 
         if (mRecorder != null) {
@@ -1641,7 +1691,8 @@ public class WhisperInputMethodService extends InputMethodService {
         prefAutoStop        = sp.getBoolean(SettingsActivity.KEY_AUTO_STOP,        true);
         prefAutoSwitch      = sp.getBoolean(SettingsActivity.KEY_AUTO_SWITCH,      false);
         prefAutoSend        = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
-        prefHapticRecording = sp.getBoolean(SettingsActivity.KEY_HAPTIC_RECORDING, true);
+        prefHapticRecording  = sp.getBoolean(SettingsActivity.KEY_HAPTIC_RECORDING, true);
+        prefAutoCapitalise   = sp.getBoolean(SettingsActivity.KEY_AUTO_CAPITALISE,   true);
     }
 
     /** Writes preference defaults once on first install. Called only from onCreate(). */

@@ -45,6 +45,7 @@ public class SettingsActivity extends AppCompatActivity {
     public static final String KEY_VAD_SPEECH_MS      = "vadSpeechDurationMs";
     public static final String KEY_HAPTIC_RECORDING   = "imeHapticRecording";
     public static final String KEY_RETURN_AFTER_IDLE  = "imeReturnAfterIdle";
+    public static final String KEY_AUTO_CAPITALISE    = "imeAutoCapitalise";
 
     private SharedPreferences sp = null;
     private Spinner spinnerLanguage;
@@ -142,6 +143,7 @@ public class SettingsActivity extends AppCompatActivity {
         wireSwitchCompat(R.id.switch_auto_send,     KEY_AUTO_SEND,       false);
         wireSwitchCompat(R.id.switch_haptic_recording, KEY_HAPTIC_RECORDING, true);
         wireSwitchCompat(R.id.switch_return_after_idle, KEY_RETURN_AFTER_IDLE, false);
+        wireSwitchCompat(R.id.switch_auto_capitalise, KEY_AUTO_CAPITALISE, true);
 
         // ── Recognition-service language spinner (existing, unchanged) ──────────
         spinnerLanguage = findViewById(R.id.spnrLanguage);
@@ -170,7 +172,7 @@ public class SettingsActivity extends AppCompatActivity {
                 sp.edit().putInt("silenceDurationMs", (int) value).apply());
 
         amplitudeThreshold = findViewById(R.id.settings_amplitude_threshold);
-        amplitudeThreshold.setValues((float) sp.getInt("vadAmplitudeThreshold", 500));
+        amplitudeThreshold.setValues((float) sp.getInt("vadAmplitudeThreshold", 300));
         amplitudeThreshold.addOnChangeListener((@NonNull RangeSlider slider, float value, boolean fromUser) ->
                 sp.edit().putInt("vadAmplitudeThreshold", (int) value).apply());
 

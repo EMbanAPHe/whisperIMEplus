@@ -288,6 +288,25 @@
                     android:text="Return to Previous Keyboard After 10 Min Idle" />
             </LinearLayout>
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:orientation="horizontal">
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_auto_capitalise"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:layout_marginStart="8dp"
+                    android:textSize="16sp"
+                    android:text="Auto-capitalise First Word of Each Result" />
+            </LinearLayout>
+
             <!-- ═══ Voice Input (Recognition Service) ═══ -->
             <TextView
                 android:layout_width="match_parent"
@@ -385,7 +404,7 @@
                 android:textSize="13sp"
                 android:textColor="@color/colorAccent"
                 android:layout_marginBottom="4dp"
-                android:text="Minimum audio level before voice detection activates. Higher = less sensitive. Increase to stop haptic feedback and background taps from triggering recording. (default 500)" />
+                android:text="Minimum audio level before voice detection activates. Higher = less sensitive. Increase to stop haptic feedback and background taps from triggering recording. (default 300)" />
 
             <com.google.android.material.slider.RangeSlider
                 android:id="@+id/settings_amplitude_threshold"
