@@ -545,7 +545,11 @@ public class WhisperInputMethodService extends InputMethodService {
                 // stays true until onSpeechRecognizedResult fires — unlike isInProgress()
                 // which clears almost immediately because Recognizer spawns its own thread.
                 if (mWhisper != null && mWhisper.isResultPending()) {
+                    // Result still incoming — defer the new session until it commits.
+                    // Show LISTENING state so the user knows the tap was registered.
                     startAfterWhisper = true;
+                    setMicState(MicState.LISTENING);
+                    setCancelEnabled(true);
                     if (Log.isLoggable(TAG, Log.DEBUG))
                         Log.d(TAG, "Mic tapped while result pending — deferring start");
                 } else {
@@ -937,6 +941,12 @@ public class WhisperInputMethodService extends InputMethodService {
                         if (mWhisper != null && !mWhisper.isInProgress() && !mWhisper.isResultPending()) {
                             processNextQueued();
                         }
+                        // Consume any pending deferred session start that was queued
+                        // while we were processing this (now stale) segment.
+                        if (startAfterWhisper && !cancelRequested) {
+                            startAfterWhisper = false;
+                            startRecordingSession(prefAutoStop);
+                        }
                     });
                     return;
                 }
@@ -1067,7 +1077,17 @@ public class WhisperInputMethodService extends InputMethodService {
                         // finishes onResultReceived fires again, hits this same
                         // branch, drains again until the queue is empty.
                     } else {
+                        // Continuous mode — drain next queued segment.
                         processNextQueued();
+                        // If the user tapped the mic while we were processing,
+                        // startAfterWhisper is set. In continuous mode the session
+                        // is already running so just clear the flag — the mic is
+                        // still active and will pick up the next sentence naturally.
+                        if (startAfterWhisper) {
+                            startAfterWhisper = false;
+                            // In continuous mode the recorder is still running, so we
+                            // don't need to start a new session — just clear the flag.
+                        }
                     }
                 });
             }
@@ -1386,7 +1406,10 @@ public class WhisperInputMethodService extends InputMethodService {
         // If Whisper is processing or audio is queued, stay in LISTENING (dim)
         // state so the user sees the result is still pending.
         // onResultReceived will drain the queue and go IDLE when done.
-        if ((mWhisper != null && mWhisper.isInProgress()) || !audioQueue.isEmpty()) {
+        if ((mWhisper != null && (mWhisper.isInProgress() || mWhisper.isResultPending()))
+                || !audioQueue.isEmpty()) {
+            // Result is still incoming — stay in LISTENING state so user knows
+            // the committed text is still on its way.
             setMicState(MicState.LISTENING);
             // Cancel button remains enabled so the user can still discard
         } else {

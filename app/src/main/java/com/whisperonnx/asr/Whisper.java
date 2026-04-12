@@ -36,6 +36,10 @@ public class Whisper {
      * the recognizer has actually produced a result yet. resultPending fills that gap.
      */
     private final AtomicBoolean resultPending = new AtomicBoolean(false);
+    /** Uptime when resultPending was last set true. Used to enforce the safety timeout. */
+    private volatile long resultPendingSetAt = 0L;
+    /** Max ms to wait for a result before treating resultPending as false (safety net). */
+    private static final long MAX_RESULT_WAIT_MS = 30_000L;
 
     private Recognizer.Action mAction;
     private String mLangCode = "";
@@ -131,7 +135,11 @@ public class Whisper {
 
             @Override
             public void onError(int[] reasons, long value) {
-                Log.d(TAG, "ERROR during recognition");
+                Log.e(TAG, "Recognizer error: " + java.util.Arrays.toString(reasons));
+                // Must clear resultPending and notify the IME, otherwise the mic button
+                // stays permanently blocked waiting for a result that will never arrive.
+                resultPending.set(false);
+                sendResult(new WhisperResult("", "", mAction));
             }
         });
 
@@ -216,9 +224,16 @@ public class Whisper {
      * delivered its result. isInProgress() goes false almost immediately after
      * r.recognize() is called (since Recognizer spawns its own thread and returns).
      * Use this method — not isInProgress() — to test whether a result is still coming.
+     * Returns false if MAX_RESULT_WAIT_MS has elapsed since the result was requested
+     * (safety net for cases where the recognizer silently fails to call any callback).
      */
     public boolean isResultPending() {
-        return resultPending.get();
+        if (!resultPending.get()) return false;
+        if (android.os.SystemClock.uptimeMillis() - resultPendingSetAt > MAX_RESULT_WAIT_MS) {
+            resultPending.set(false); // timeout — treat as no longer pending
+            return false;
+        }
+        return true;
     }
 
     private void processRecordBufferLoop() {
@@ -254,7 +269,8 @@ public class Whisper {
                 // by a memory dump tool between sessions. The float[] samples is
                 // local to this stack frame and will be GC'd when inference ends.
                 RecordBuffer.clearBuffer();
-                resultPending.set(true); // cleared in sendResult after callback fires
+                resultPending.set(true);
+                resultPendingSetAt = android.os.SystemClock.uptimeMillis();
                 r.recognize(samples, 1, mLangCode, mAction);
             } else {
                 Log.w(TAG, "Cannot transcribe: r=" + r + " action=" + mAction
