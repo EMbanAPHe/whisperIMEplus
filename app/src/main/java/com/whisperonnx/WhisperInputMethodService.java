@@ -216,12 +216,11 @@ public class WhisperInputMethodService extends InputMethodService {
     /** Max time (ms) suppression is active. After this, auto-start resumes normally. */
     private static final long SUPPRESS_TIMEOUT_MS = 8_000L;
     /**
-     * When true, an in-flight Whisper result from a superseded session should
-     * still be committed. Set when the user taps start before Whisper finishes
-     * (the previous utterance is valid — the user spoke it).
-     * Cleared by cancel (where the user explicitly chose to discard).
+     * Set when the user taps the mic button to START while Whisper is still
+     * processing the last segment. The new session is deferred until
+     * onResultReceived commits the result, then auto-starts.
      */
-    private volatile boolean commitStaleResult = false;
+    private volatile boolean startAfterWhisper = false;
     /**
      * Language detected in the first "auto" segment of the current session.
      * Subsequent segments use this language instead of re-running detection,
@@ -528,23 +527,27 @@ public class WhisperInputMethodService extends InputMethodService {
                     }
                     return;
                 }
-                // Start the new recording session immediately so no audio is lost.
-                // If Whisper is still finishing the previous utterance, set
-                // commitStaleResult so onResultReceived commits that text even though
-                // sessionGen will have changed by the time the callback fires.
+                // If the recognizer is still producing a result from the last session,
+                // wait for it to finish before starting a new one. isResultPending()
+                // stays true until onSpeechRecognizedResult fires — unlike isInProgress()
+                // which clears almost immediately because Recognizer spawns its own thread.
                 if (mWhisper != null && mWhisper.isResultPending()) {
-                    commitStaleResult = true;
+                    // Result still incoming — defer the new session until it commits.
+                    // Show LISTENING state so the user knows the tap was registered.
+                    startAfterWhisper = true;
+                    setMicState(MicState.LISTENING);
+                    setCancelEnabled(true);
                     if (Log.isLoggable(TAG, Log.DEBUG))
-                        Log.d(TAG, "Mic tapped while result pending — starting now, stale result will commit");
+                        Log.d(TAG, "Mic tapped while result pending — deferring start");
+                } else {
+                    startRecordingSession(prefAutoStop);
                 }
-                startRecordingSession(prefAutoStop);
             }
         });
 
         // ── Cancel — hard stop: discard everything, go idle ───────────────────
         btnCancel.setOnClickListener(v -> {
             tap(v);
-            commitStaleResult = false; // explicit cancel — discard in-flight result
             // Set suppression BEFORE exitListeningMode so currentEditorKey() still works
             suppressNextAutoStart = true;
             suppressedForEditor   = currentEditorKey();
@@ -717,12 +720,18 @@ public class WhisperInputMethodService extends InputMethodService {
                         // Suppress VAD for 250ms after each haptic — CLOCK_TICK
                         // vibrations couple through the chassis into the mic.
                         if (mRecorder != null) mRecorder.suppressVadTrigger(250);
-                        if (getCurrentInputConnection() != null) {
-                            long st = android.os.SystemClock.uptimeMillis();
-                            getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0));
-                            getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_RIGHT, 0));
+                        android.view.inputmethod.InputConnection icR = getCurrentInputConnection();
+                        if (icR != null) {
+                            // Only move right if not already at end of field.
+                            // KEYCODE_DPAD_RIGHT bubbles through the view hierarchy
+                            // and escapes the text field at the boundary — FlorisBoard
+                            // avoids this by checking for content before sending.
+                            CharSequence after = icR.getTextAfterCursor(1, 0);
+                            if (after != null && after.length() > 0) {
+                                long st = android.os.SystemClock.uptimeMillis();
+                                icR.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0));
+                                icR.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_RIGHT, 0));
+                            }
                         }
                     }
                     while (spaceSwipeState[2] < -SWIPE_THRESHOLD_PX) {
@@ -732,12 +741,15 @@ public class WhisperInputMethodService extends InputMethodService {
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                         // Suppress VAD for 250ms after each haptic
                         if (mRecorder != null) mRecorder.suppressVadTrigger(250);
-                        if (getCurrentInputConnection() != null) {
-                            long st = android.os.SystemClock.uptimeMillis();
-                            getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0));
-                            getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_LEFT, 0));
+                        android.view.inputmethod.InputConnection icL = getCurrentInputConnection();
+                        if (icL != null) {
+                            // Only move left if not already at start of field.
+                            CharSequence before = icL.getTextBeforeCursor(1, 0);
+                            if (before != null && before.length() > 0) {
+                                long st = android.os.SystemClock.uptimeMillis();
+                                icL.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0));
+                                icL.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_LEFT, 0));
+                            }
                         }
                     }
                     break;
@@ -757,14 +769,22 @@ public class WhisperInputMethodService extends InputMethodService {
         // ── Send (IME action) ──────────────────────────────────────────────────
         btnSend.setOnClickListener(v -> {
             tap(v);
-            if (getCurrentInputConnection() == null) return;
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic == null) return;
             EditorInfo ei = getCurrentInputEditorInfo();
-            if (ei != null && ei.actionId != 0
-                    && ei.actionId != EditorInfo.IME_ACTION_NONE
-                    && ei.actionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
-                getCurrentInputConnection().performEditorAction(ei.actionId);
+            int actionId = ei != null ? ei.actionId : 0;
+            if (actionId != 0
+                    && actionId != EditorInfo.IME_ACTION_NONE
+                    && actionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                // App declared a specific action (Search, Done, Go, etc.) — use it.
+                ic.performEditorAction(actionId);
             } else {
-                getCurrentInputConnection().performEditorAction(EditorInfo.IME_ACTION_SEND);
+                // No specific action declared (Signal, many chat apps).
+                // These apps handle KEYCODE_ENTER for send — performEditorAction()
+                // with any action code is ignored and causes the keyboard to hide.
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
             }
         });
 
@@ -910,24 +930,29 @@ public class WhisperInputMethodService extends InputMethodService {
                 //   • If the keyboard was closed mid-inference, same protection.
                 final int sid = activeWhisperSessionId;
 
-                // Primary guard: session mismatch.
+                // Primary guard: session mismatch — this result is stale, discard it.
                 if (sessionGen != sid) {
-                    if (commitStaleResult && !cancelRequested) {
-                        // User tapped Start before this result arrived — the previous
-                        // utterance is valid. Fall through to commit the text.
-                        // The new session's recorder is already capturing audio.
-                        commitStaleResult = false;
-                        // Fall through — do NOT return.
-                    } else {
-                        // Genuinely stale (cancelled, orientation change, etc.) — discard.
-                        handler.post(() -> {
-                            if (mWhisper != null && !mWhisper.isInProgress()
-                                    && !mWhisper.isResultPending()) {
-                                processNextQueued();
-                            }
-                        });
-                        return;
-                    }
+                    // The old inference is now done so mWhisper.isInProgress() just
+                    // became false.  Post to the main thread to drain any audio the
+                    // new session queued while Whisper was busy with this old job.
+                    // Do NOT touch isListening, mic state, or cancelRequested here —
+                    // the active session owns those fields.
+                    // Only drain the queue if Whisper is not already running —
+                    // the new session may have already called processNextQueued() and
+                    // started Whisper. Calling it again would be a no-op (isInProgress
+                    // guard inside) but it's cleaner to check here.
+                    handler.post(() -> {
+                        if (mWhisper != null && !mWhisper.isInProgress() && !mWhisper.isResultPending()) {
+                            processNextQueued();
+                        }
+                        // Consume any pending deferred session start that was queued
+                        // while we were processing this (now stale) segment.
+                        if (startAfterWhisper && !cancelRequested) {
+                            startAfterWhisper = false;
+                            startRecordingSession(prefAutoStop);
+                        }
+                    });
+                    return;
                 }
 
                 // Secondary guard: discard (keep session alive, just drop this result)
@@ -1003,12 +1028,17 @@ public class WhisperInputMethodService extends InputMethodService {
                 // Auto-send
                 if (prefAutoSend && getCurrentInputConnection() != null) {
                     EditorInfo ei = getCurrentInputEditorInfo();
-                    if (ei != null && ei.actionId != 0
-                            && ei.actionId != EditorInfo.IME_ACTION_NONE) {
-                        getCurrentInputConnection().performEditorAction(ei.actionId);
+                    int autoActionId = ei != null ? ei.actionId : 0;
+                    if (autoActionId != 0
+                            && autoActionId != EditorInfo.IME_ACTION_NONE
+                            && autoActionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                        getCurrentInputConnection().performEditorAction(autoActionId);
                     } else {
-                        getCurrentInputConnection()
-                                .performEditorAction(EditorInfo.IME_ACTION_SEND);
+                        long t = android.os.SystemClock.uptimeMillis();
+                        getCurrentInputConnection().sendKeyEvent(
+                                new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
+                        getCurrentInputConnection().sendKeyEvent(
+                                new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
                     }
                 }
 
@@ -1041,15 +1071,32 @@ public class WhisperInputMethodService extends InputMethodService {
                         // it will return here when done and reach the else branch.
                         processNextQueued();
                         if (!mWhisper.isInProgress()) {
-                            isListening = false;
-                            setMicState(MicState.IDLE);
-                            setCancelEnabled(false);
+                            // Queue was empty — nothing started.
+                            if (startAfterWhisper) {
+                                // User tapped mic while we were processing — start now.
+                                startAfterWhisper = false;
+                                startRecordingSession(prefAutoStop);
+                            } else {
+                                isListening = false;
+                                setMicState(MicState.IDLE);
+                                setCancelEnabled(false);
+                            }
                         }
                         // else: Whisper started on next queued segment; when it
                         // finishes onResultReceived fires again, hits this same
                         // branch, drains again until the queue is empty.
                     } else {
+                        // Continuous mode — drain next queued segment.
                         processNextQueued();
+                        // If the user tapped the mic while we were processing,
+                        // startAfterWhisper is set. In continuous mode the session
+                        // is already running so just clear the flag — the mic is
+                        // still active and will pick up the next sentence naturally.
+                        if (startAfterWhisper) {
+                            startAfterWhisper = false;
+                            // In continuous mode the recorder is still running, so we
+                            // don't need to start a new session — just clear the flag.
+                        }
                     }
                 });
             }
@@ -1296,7 +1343,6 @@ public class WhisperInputMethodService extends InputMethodService {
         continuousMode        = false;   // stop the continuous loop
         isListening           = false;   // prevent auto-restart
         pendingStartSessionId = 0;       // cancel any deferred recorder start
-        commitStaleResult     = false;   // soft stop — in-flight results commit via normal path
         // cancelRequested stays false — Whisper result will be committed normally.
         // sessionGen is NOT incremented — existing session IDs remain valid so
         // all in-flight callbacks (MSG_RECORDING_DONE, onResultReceived) pass
@@ -1348,7 +1394,7 @@ public class WhisperInputMethodService extends InputMethodService {
         isListening           = false;
         isRecording           = false;
         pendingStartSessionId = 0;   // cancel any deferred start
-        commitStaleResult     = false; // cancel — discard any in-flight result
+        startAfterWhisper     = false; // cancel any deferred new session
         transcriptionHistory.clear(); // undo history is session-scoped
         sessionLanguage       = "";   // reset language lock for next session
         // suppressNextAutoStart is intentionally NOT set here.
