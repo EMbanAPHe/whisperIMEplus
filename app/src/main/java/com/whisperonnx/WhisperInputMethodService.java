@@ -695,64 +695,62 @@ public class WhisperInputMethodService extends InputMethodService {
         });
 
         // ── Space bar — tap inserts space; drag left/right moves cursor ─────────
-        // Swipe sensitivity: pixels of movement per cursor step.
-        final float[] spaceSwipeState = {0f, 0f, 0f}; // [startX, lastX, totalDelta]
-        final boolean[] spaceMoved = {false};
-        final float SWIPE_THRESHOLD_PX = 8f * getResources().getDisplayMetrics().density;
+        // Uses the FlorisBoard absolute-position approach: on ACTION_DOWN we snapshot
+        // the cursor position and text length via getExtractedText(); on every
+        // ACTION_MOVE we compute targetPos = snapshotCursor + (totalPixelDelta / sensitivity),
+        // clamp to [0, textLength], and call setSelection() once.  This is immune to
+        // fast swipes because there is no incremental accumulation — the boundary clamp
+        // is always applied to the full gesture delta, not to each tiny step.
+        // No KEYCODE_DPAD events are sent, so the "focus escapes the field" bug cannot
+        // occur regardless of speed.
+        final float SWIPE_SENSITIVITY_PX = 8f * getResources().getDisplayMetrics().density;
+        final float[] spaceDownX       = {0f};
+        final int[]   spaceCursorStart = {-1};
+        final int[]   spaceTextLen     = {0};
+        final int[]   spaceLastPos     = {-1}; // last char position, for haptic gating
+        final boolean[] spaceMoved     = {false};
         btnSpace.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
-                case MotionEvent.ACTION_DOWN:
-                    spaceSwipeState[0] = event.getX();
-                    spaceSwipeState[1] = event.getX();
-                    spaceSwipeState[2] = 0f;
-                    spaceMoved[0] = false;
+                case MotionEvent.ACTION_DOWN: {
+                    spaceDownX[0]   = event.getX();
+                    spaceMoved[0]   = false;
+                    android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                    if (ic != null) {
+                        ExtractedText et = ic.getExtractedText(new ExtractedTextRequest(), 0);
+                        if (et != null && et.text != null) {
+                            spaceCursorStart[0] = et.selectionStart;
+                            spaceTextLen[0]     = et.text.length();
+                            spaceLastPos[0]     = et.selectionStart;
+                        } else {
+                            spaceCursorStart[0] = -1; // IC unavailable — fall back gracefully
+                        }
+                    } else {
+                        spaceCursorStart[0] = -1;
+                    }
                     break;
-                case MotionEvent.ACTION_MOVE:
-                    float dx = event.getX() - spaceSwipeState[1];
-                    spaceSwipeState[1] = event.getX();
-                    spaceSwipeState[2] += dx;
-                    // Move cursor one step per SWIPE_THRESHOLD_PX of cumulative movement
-                    while (spaceSwipeState[2] > SWIPE_THRESHOLD_PX) {
-                        spaceSwipeState[2] -= SWIPE_THRESHOLD_PX;
+                }
+                case MotionEvent.ACTION_MOVE: {
+                    if (spaceCursorStart[0] < 0) break; // no snapshot — skip
+                    float totalDeltaPx = event.getX() - spaceDownX[0];
+                    int charDelta = (int)(totalDeltaPx / SWIPE_SENSITIVITY_PX);
+                    int targetPos = spaceCursorStart[0] + charDelta;
+                    targetPos = Math.max(0, Math.min(spaceTextLen[0], targetPos));
+                    // Move cursor atomically — no DPAD events, no focus-escape risk.
+                    android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                    if (ic != null) {
+                        ic.setSelection(targetPos, targetPos);
+                    }
+                    // Haptic fires once per character boundary crossed (not per pixel event).
+                    if (targetPos != spaceLastPos[0]) {
                         spaceMoved[0] = true;
                         v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                 HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                        // Suppress VAD for 250ms after each haptic — CLOCK_TICK
-                        // vibrations couple through the chassis into the mic.
+                        // Suppress VAD for 250 ms — CLOCK_TICK vibrations couple into mic.
                         if (mRecorder != null) mRecorder.suppressVadTrigger(250);
-                        android.view.inputmethod.InputConnection icR = getCurrentInputConnection();
-                        if (icR != null) {
-                            // Only move right if not already at end of field.
-                            // KEYCODE_DPAD_RIGHT bubbles through the view hierarchy
-                            // and escapes the text field at the boundary — FlorisBoard
-                            // avoids this by checking for content before sending.
-                            CharSequence after = icR.getTextAfterCursor(1, 0);
-                            if (after != null && after.length() > 0) {
-                                long st = android.os.SystemClock.uptimeMillis();
-                                icR.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0));
-                                icR.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_RIGHT, 0));
-                            }
-                        }
-                    }
-                    while (spaceSwipeState[2] < -SWIPE_THRESHOLD_PX) {
-                        spaceSwipeState[2] += SWIPE_THRESHOLD_PX;
-                        spaceMoved[0] = true;
-                        v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                        // Suppress VAD for 250ms after each haptic
-                        if (mRecorder != null) mRecorder.suppressVadTrigger(250);
-                        android.view.inputmethod.InputConnection icL = getCurrentInputConnection();
-                        if (icL != null) {
-                            // Only move left if not already at start of field.
-                            CharSequence before = icL.getTextBeforeCursor(1, 0);
-                            if (before != null && before.length() > 0) {
-                                long st = android.os.SystemClock.uptimeMillis();
-                                icL.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0));
-                                icL.sendKeyEvent(new KeyEvent(st, st, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_DPAD_LEFT, 0));
-                            }
-                        }
+                        spaceLastPos[0] = targetPos;
                     }
                     break;
+                }
                 case MotionEvent.ACTION_UP:
                     if (!spaceMoved[0]) {
                         // No swipe occurred — treat as a tap
