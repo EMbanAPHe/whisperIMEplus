@@ -1599,13 +1599,11 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private void updateSecondaryLabels() {
         if (btnSecStreaming != null) {
-            btnSecStreaming.setText("Stream
-" + (prefAutoStop ? "[ON]" : "[OFF]"));
+            btnSecStreaming.setText("Stream\n" + (prefAutoStop ? "[ON]" : "[OFF]"));
         }
         if (btnSecLang != null) {
             String lang = sp != null ? sp.getString("language", "auto") : "auto";
-            btnSecLang.setText("Lang
-[" + lang + "]");
+            btnSecLang.setText("Lang\n[" + lang + "]");
         }
     }
 
