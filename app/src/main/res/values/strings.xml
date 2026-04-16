@@ -51,6 +51,11 @@
     <string name="translate_button">Toggle translation to English</string>
     <string name="loading_model">Loading model…</string>
 
+    <!-- New buttons v12 -->
+    <string name="break_audio">Break\nAudio</string>
+    <string name="caps_toggle">Capitalisation toggle</string>
+    <string name="menu_swap">Extended controls</string>
+
     <!-- New buttons v11 -->
     <string name="discard_audio">Discard\nAudio</string>
     <string name="select_all">Sel\nAll</string>

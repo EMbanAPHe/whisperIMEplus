@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp" android:height="36dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Hollow shift key = auto/default mode -->
+    <path android:fillAlpha="0"
+          android:strokeColor="#FFFFFF"
+          android:strokeWidth="1.8"
+          android:pathData="M12,4L4,12h4v8h8v-8h4z"/>
+</vector>

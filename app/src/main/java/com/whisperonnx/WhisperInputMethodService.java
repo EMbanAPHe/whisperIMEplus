@@ -110,7 +110,7 @@ public class WhisperInputMethodService extends InputMethodService {
     private ImageButton  btnForwardDel; // Forward Delete — icon button
     private TextView     tvStatus;
     private ProgressBar  processingBar;
-    private LinearLayout layoutKeyboardContent;
+    private ViewGroup    layoutKeyboardContent;
 
     // translate: not static — each service instance owns its own state.
     // volatile so startTranscription() (main thread) sees any future writes from other paths.
@@ -229,7 +229,33 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private String sessionLanguage = "";
 
-    // Long-press repeat runnables — stored as fields so onFinishInputView can cancel them
+    // ── v12 new buttons ─────────────────────────────────────────────
+    private View         btnBreakAudio;   // Break Audio - cuts segment, keeps listening
+    private ImageButton  btnCapsToggle;   // Capitalisation cycle: auto / upper / lower
+    private ImageButton  btnMenuSwap;     // Swap to/from secondary layout
+    private LinearLayout layoutPrimary;   // Primary layout container
+    private LinearLayout layoutSecondary; // Secondary layout container (audio paused)
+    private TextView     btnSecStreaming; // Streaming toggle label in secondary layout
+    private TextView     btnSecLang;      // Language display label in secondary layout
+
+    /**
+     * Capitalisation override applied to each Whisper result:
+     *   0 = auto  (honours prefAutoCapitalise - default)
+     *   1 = force upper  (always capitalise first letter)
+     *   2 = force lower  (always lowercase first letter)
+     */
+    private int capsOverride = 0;
+
+    /** True while the secondary layout is showing. */
+    private boolean isSecondaryLayout = false;
+
+    /**
+     * Whether audio was active when the secondary layout was opened,
+     * so we can resume it when the user returns to the primary layout.
+     */
+    private boolean wasListeningBeforeSecondary = false;
+
+    // Long-press repeat runnables - stored as fields so onFinishInputView can cancel them
     private Runnable delInitial;
     private Runnable delFast;
     private Runnable fwdDelInitial;
@@ -485,6 +511,18 @@ public class WhisperInputMethodService extends InputMethodService {
         tvStatus              = view.findViewById(R.id.tv_status);
         layoutKeyboardContent = view.findViewById(R.id.layout_keyboard_content);
 
+        // v12 new buttons and layout containers
+        btnBreakAudio   = view.findViewById(R.id.btnBreakAudio);
+        btnCapsToggle   = view.findViewById(R.id.btnCapsToggle);
+        btnMenuSwap     = view.findViewById(R.id.btnMenuSwap);
+        layoutPrimary   = view.findViewById(R.id.layout_primary);
+        layoutSecondary = view.findViewById(R.id.layout_secondary);
+        btnSecStreaming  = view.findViewById(R.id.btnSecStreaming);
+        btnSecLang      = view.findViewById(R.id.btnSecLang);
+
+        // Restore caps icon in case of orientation change/re-inflation
+        updateCapsIcon();
+
         // Size the keyboard panel to match FlorisBoard's default height
         setKeyboardHeight();
 
@@ -617,6 +655,135 @@ public class WhisperInputMethodService extends InputMethodService {
             return true;
         });
         btnRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
+
+        // ── Break Audio ────────────────────────────────────────────────
+        // Stops the current audio segment so Whisper transcribes it immediately,
+        // then restarts listening without any gap — like a manual VAD trigger.
+        // Enabled only while a session is active (same enable pattern as btnDiscard).
+        if (btnBreakAudio != null) {
+            btnBreakAudio.setOnClickListener(v -> {
+                tap(v);
+                breakAudioAndContinue();
+            });
+        }
+
+        // ── Caps Toggle ────────────────────────────────────────────────
+        // Cycles: auto (hollow shift) -> force upper (solid shift) -> force lower (down shift)
+        if (btnCapsToggle != null) {
+            btnCapsToggle.setOnClickListener(v -> {
+                tap(v);
+                capsOverride = (capsOverride + 1) % 3;
+                updateCapsIcon();
+            });
+        }
+
+        // ── Menu / Layout Swap ──────────────────────────────────────────
+        if (btnMenuSwap != null) {
+            btnMenuSwap.setOnClickListener(v -> {
+                tap(v);
+                toggleSecondaryLayout();
+            });
+        }
+
+        // ── Secondary layout buttons ───────────────────────────────────
+        // KB button in secondary (same as primary keyboard button)
+        View btnKbSec = view.findViewById(R.id.btnKeyboardSec);
+        if (btnKbSec != null) btnKbSec.setOnClickListener(v -> {
+            tap(v);
+            switchToPreviousInputMethod();
+        });
+        // Streaming toggle in secondary layout
+        if (btnSecStreaming != null) btnSecStreaming.setOnClickListener(v -> {
+            tap(v);
+            prefAutoStop = !prefAutoStop;
+            if (sp != null) sp.edit().putBoolean("imeAutoStop", prefAutoStop).apply();
+            updateSecondaryLabels();
+        });
+        // Language display (tap to cycle through common languages)
+        final String[] LANG_CYCLE = {"auto", "en", "fr", "de", "es", "zh", "ja", "ar"};
+        if (btnSecLang != null) btnSecLang.setOnClickListener(v -> {
+            tap(v);
+            String cur = sp != null ? sp.getString("language", "auto") : "auto";
+            int idx = 0;
+            for (int i = 0; i < LANG_CYCLE.length; i++) {
+                if (LANG_CYCLE[i].equals(cur)) { idx = i; break; }
+            }
+            String next = LANG_CYCLE[(idx + 1) % LANG_CYCLE.length];
+            if (sp != null) sp.edit().putString("language", next).apply();
+            sessionLanguage = ""; // reset session lock
+            updateSecondaryLabels();
+        });
+        // Settings shortcut
+        View btnSecSet = view.findViewById(R.id.btnSecSettings);
+        if (btnSecSet != null) btnSecSet.setOnClickListener(v -> {
+            tap(v);
+            android.content.Intent intent = new android.content.Intent(this,
+                    com.whisperonnx.SettingsActivity.class);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        });
+        // Switch IME from secondary
+        View btnSecSwitch = view.findViewById(R.id.btnSecSwitchIme);
+        if (btnSecSwitch != null) btnSecSwitch.setOnClickListener(v -> {
+            tap(v);
+            switchToPreviousInputMethod();
+        });
+        // Secondary layout: left col text-edit buttons
+        View btnSecU = view.findViewById(R.id.btnSecUndo);
+        View btnSecR = view.findViewById(R.id.btnSecRedo);
+        View btnSecSA = view.findViewById(R.id.btnSecSelAll);
+        View btnSecCl = view.findViewById(R.id.btnSecClear);
+        View btnSecMe = view.findViewById(R.id.btnSecMenu);
+        if (btnSecU  != null) btnSecU.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
+        if (btnSecR  != null) btnSecR.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
+        if (btnSecSA != null) btnSecSA.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_A, false); });
+        if (btnSecCl != null) btnSecCl.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic == null) return;
+            CharSequence before = ic.getTextBeforeCursor(10000, 0);
+            CharSequence after  = ic.getTextAfterCursor(10000, 0);
+            if (before == null) before = "";
+            if (after  == null) after  = "";
+            ic.deleteSurroundingText(before.length(), after.length());
+        });
+        if (btnSecMe != null) btnSecMe.setOnClickListener(v -> { tap(v); toggleSecondaryLayout(); });
+        // Secondary layout: right col text-edit buttons
+        View btnScCut = view.findViewById(R.id.btnSecCut);
+        View btnScCpy = view.findViewById(R.id.btnSecCopy);
+        View btnScPst = view.findViewById(R.id.btnSecPaste);
+        View btnScDel = view.findViewById(R.id.btnSecDel);
+        View btnScEnt = view.findViewById(R.id.btnSecEnter);
+        if (btnScCut != null) btnScCut.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_X, false); });
+        if (btnScCpy != null) btnScCpy.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_C, false); });
+        if (btnScPst != null) btnScPst.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_V, false); });
+        if (btnScDel != null) btnScDel.setOnTouchListener((v, ev) -> {
+            // Backspace with long-press repeat (reuses doDelete helper)
+            switch (ev.getAction()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    tap(v); doDelete();
+                    Runnable secDelFast = new Runnable() {
+                        @Override public void run() { doDelete(); handler.postDelayed(this, 50); }
+                    };
+                    handler.postDelayed(secDelFast, 400);
+                    v.setTag(secDelFast);
+                    break;
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    Object tag = v.getTag();
+                    if (tag instanceof Runnable) { handler.removeCallbacks((Runnable) tag); v.setTag(null); }
+                    break;
+            }
+            return true;
+        });
+        if (btnScEnt != null) btnScEnt.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic == null) return;
+            long t = android.os.SystemClock.uptimeMillis();
+            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
+            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
+        });
 
         // ── Full Stop / Punctuation toggle — tap toggles popup open/closed ──────
         // Does NOT insert a period. Press again to close popup.
@@ -999,10 +1166,25 @@ public class WhisperInputMethodService extends InputMethodService {
 
                 // Undo Recognizer's forced capitalisation if user prefers raw case.
                 // Recognizer.correctText() always uppercases the first character.
-                // When prefAutoCapitalise is false we lowercase it back.
-                if (!prefAutoCapitalise && result.length() > 0
-                        && Character.isUpperCase(result.charAt(0))) {
-                    result = Character.toLowerCase(result.charAt(0)) + result.substring(1);
+                // Apply capitalisation override (v12 caps toggle).
+                // capsOverride 0 = auto: honour prefAutoCapitalise (Whisper always
+                //   capitalises first char, so lower it if the pref says not to).
+                // capsOverride 1 = force upper: ensure first char is uppercase.
+                // capsOverride 2 = force lower: always lowercase the first char.
+                if (capsOverride == 1) {
+                    if (result.length() > 0 && Character.isLowerCase(result.charAt(0))) {
+                        result = Character.toUpperCase(result.charAt(0)) + result.substring(1);
+                    }
+                } else if (capsOverride == 2) {
+                    if (result.length() > 0 && Character.isUpperCase(result.charAt(0))) {
+                        result = Character.toLowerCase(result.charAt(0)) + result.substring(1);
+                    }
+                } else {
+                    // Auto: respect user preference (Whisper always capitalises)
+                    if (!prefAutoCapitalise && result.length() > 0
+                            && Character.isUpperCase(result.charAt(0))) {
+                        result = Character.toLowerCase(result.charAt(0)) + result.substring(1);
+                    }
                 }
 
                 // Commit text — guarded by session check on this thread
@@ -1337,6 +1519,96 @@ public class WhisperInputMethodService extends InputMethodService {
         }
     }
 
+    // ── v12 new methods ────────────────────────────────────────────────────────
+
+    /**
+     * Break Audio: stop the current recording segment so Whisper transcribes it
+     * immediately, then restart listening without any perceptible gap.
+     * Unlike discardAudioAndContinue(), the captured audio IS committed — this
+     * is a manual VAD trigger, not a discard. Only callable while a session is active.
+     */
+    private void breakAudioAndContinue() {
+        if (!isListening || mRecorder == null) return;
+        // Stop the current chunk. MSG_RECORDING_DONE will fire and route the
+        // audio to Whisper. discardRequested is NOT set, so it commits normally.
+        if (mRecorder.isSessionActive()) mRecorder.stop();
+        // Immediately restart to keep listening.
+        activeRecordingSessionId = sessionGen;
+        if (continuousMode) mRecorder.initVad();
+        mRecorder.start();
+        setMicState(MicState.LISTENING);
+    }
+
+    /**
+     * Update the caps-toggle button icon to reflect the current capsOverride state.
+     * Safe to call at any time; no-ops if the button reference is null.
+     */
+    private void updateCapsIcon() {
+        if (btnCapsToggle == null) return;
+        switch (capsOverride) {
+            case 1:  // Force uppercase first letter
+                btnCapsToggle.setImageResource(R.drawable.ic_caps_upper_36dp);
+                break;
+            case 2:  // Force lowercase first letter
+                btnCapsToggle.setImageResource(R.drawable.ic_caps_lower_36dp);
+                break;
+            default: // Auto — honours prefAutoCapitalise setting
+                btnCapsToggle.setImageResource(R.drawable.ic_caps_auto_36dp);
+                break;
+        }
+    }
+
+    /**
+     * Toggle between the primary (recording) and secondary (extended controls) layouts.
+     *
+     * Switching TO secondary:
+     *   - Records whether audio was active so we can resume on return.
+     *   - Stops recording/transcription cleanly via exitListeningMode().
+     *   - Hides the primary layout, shows the secondary layout.
+     *   - Refreshes the streaming/language labels.
+     *
+     * Switching BACK to primary:
+     *   - Hides the secondary layout, shows the primary layout.
+     *   - If audio was active before the switch, resumes the recording session.
+     */
+    private void toggleSecondaryLayout() {
+        isSecondaryLayout = !isSecondaryLayout;
+        if (layoutPrimary == null || layoutSecondary == null) return;
+
+        if (isSecondaryLayout) {
+            // Switching to secondary — snapshot state and pause audio
+            wasListeningBeforeSecondary = isListening;
+            if (isListening) exitListeningMode(true);
+            layoutPrimary.setVisibility(View.GONE);
+            layoutSecondary.setVisibility(View.VISIBLE);
+            updateSecondaryLabels();
+        } else {
+            // Switching back to primary — restore audio if it was running
+            layoutSecondary.setVisibility(View.GONE);
+            layoutPrimary.setVisibility(View.VISIBLE);
+            if (wasListeningBeforeSecondary && !isListening) {
+                suppressNextAutoStart = false;  // allow restart
+                startRecordingSession(prefAutoStop);
+            }
+        }
+    }
+
+    /**
+     * Refresh the dynamic labels in the secondary layout (streaming mode, language).
+     * Called whenever the secondary layout is shown or a value changes.
+     */
+    private void updateSecondaryLabels() {
+        if (btnSecStreaming != null) {
+            btnSecStreaming.setText("Stream
+" + (prefAutoStop ? "[ON]" : "[OFF]"));
+        }
+        if (btnSecLang != null) {
+            String lang = sp != null ? sp.getString("language", "auto") : "auto";
+            btnSecLang.setText("Lang
+[" + lang + "]");
+        }
+    }
+
     private void stopListeningGracefully() {
         continuousMode        = false;   // stop the continuous loop
         isListening           = false;   // prevent auto-restart
@@ -1513,6 +1785,12 @@ public class WhisperInputMethodService extends InputMethodService {
         if (btnDiscard != null) {
             btnDiscard.setEnabled(enabled);
             btnDiscard.setAlpha(enabled ? 1.0f : 0.4f);
+        }
+        // Break Audio follows the same enable/disable pattern as Discard Audio:
+        // it is only meaningful while a session is active.
+        if (btnBreakAudio != null) {
+            btnBreakAudio.setEnabled(enabled);
+            btnBreakAudio.setAlpha(enabled ? 1.0f : 0.4f);
         }
     }
 
