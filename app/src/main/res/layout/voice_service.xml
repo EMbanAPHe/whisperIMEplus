@@ -495,7 +495,7 @@
                         android:layout_weight="1"
                         android:layout_marginEnd="4dp"
                         android:background="@drawable/rounded_button_tonal"
-                        android:text="&#x21E7;"
+                        android:text="Shift"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
                         android:textSize="18sp"
@@ -537,7 +537,7 @@
                         android:layout_weight="1"
                         android:layout_marginEnd="4dp"
                         android:background="@drawable/rounded_button_tonal"
-                        android:text="&#x21B9;"
+                        android:text="Tab"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
                         android:textSize="16sp" />

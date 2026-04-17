@@ -805,37 +805,37 @@ public class WhisperInputMethodService extends InputMethodService {
                             dpadDrag[0] = true; dpadMoved[0] = true;
                         }
                         if (!dpadDrag[0]) break;
-                        if (Math.abs(dx) >= Math.abs(dy)) {
-                            // Horizontal — absolute setSelection like spacebar
-                            if (dpadCurSt[0] < 0) break;
+                        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                        // ── Horizontal axis: absolute setSelection (no direction lock) ──
+                        // Always computed from total dx so direction changes freely.
+                        if (dpadCurSt[0] >= 0 && ic != null) {
                             int charDelta = (int)(dx / H_SENS);
                             int target = Math.max(0, Math.min(dpadTxtLen[0], dpadCurSt[0] + charDelta));
-                            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-                            if (ic != null) {
-                                if (shiftActive) ic.setSelection(dpadSelAnch[0], target);
-                                else             ic.setSelection(target, target);
-                            }
+                            // Shift held: keep selection anchor, move active end.
+                            // No shift: collapse selection to cursor position.
+                            if (shiftActive) ic.setSelection(dpadSelAnch[0], target);
+                            else             ic.setSelection(target, target);
                             if (target != dpadLastH[0]) {
                                 v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                         HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                                 if (mRecorder != null) mRecorder.suppressVadTrigger(250);
                                 dpadLastH[0] = target;
                             }
-                        } else {
-                            // Vertical — incremental DPAD_UP/DOWN
+                        }
+                        // ── Vertical axis: incremental DPAD_UP/DOWN (no direction lock) ──
+                        // Computed from total dy so reversing direction works naturally.
+                        {
                             int steps = (int)(dy / V_SENS);
                             int diff  = steps - dpadLastV[0];
-                            if (diff != 0) {
+                            if (diff != 0 && ic != null) {
                                 int kc = diff > 0 ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP;
                                 int meta = 0;
                                 if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
-                                android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-                                if (ic != null) {
-                                    for (int i = 0; i < Math.abs(diff); i++) {
-                                        long t = android.os.SystemClock.uptimeMillis();
-                                        ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
-                                        ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
-                                    }
+                                if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
+                                for (int i = 0; i < Math.abs(diff); i++) {
+                                    long t = android.os.SystemClock.uptimeMillis();
+                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
+                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
                                 }
                                 dpadLastV[0] = steps;
                                 v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
@@ -1681,22 +1681,46 @@ public class WhisperInputMethodService extends InputMethodService {
     private String applyCapitalization(String text) {
         if (text == null || text.isEmpty()) return text;
         if (capsOverride == 1) {
-            // Force uppercase: ensure the first character of the result is capitalised.
-            // Whisper already capitalises each sentence, so only the first char matters.
-            if (Character.isLowerCase(text.charAt(0))) {
-                return Character.toUpperCase(text.charAt(0)) + text.substring(1);
-            }
-            return text;
+            // Force uppercase: capitalise first char and every sentence start.
+            // Whisper normally does this already, but handle any edge cases.
+            return uppercaseSentenceStarts(text);
         } else if (capsOverride == 2) {
             // Force lowercase: strip all sentence-start capitals Whisper inserted.
+            // This is the only mode that touches mid-block sentence starts.
             return lowercaseSentenceStarts(text);
         } else {
-            // Auto: honour prefAutoCapitalise setting.
-            if (!prefAutoCapitalise) {
-                return lowercaseSentenceStarts(text);
+            // Auto mode: only touch the very first character of the result,
+            // exactly matching the original pre-v13 behaviour.
+            // Whisper handles mid-block sentence capitalisation itself — we must
+            // not strip those or multi-sentence blocks lose their sentence breaks.
+            if (!prefAutoCapitalise && text.length() > 0
+                    && Character.isUpperCase(text.charAt(0))) {
+                return Character.toLowerCase(text.charAt(0)) + text.substring(1);
             }
-            return text; // keep Whisper's capitalisation
+            return text;
         }
+    }
+
+    /**
+     * Capitalise the first letter of every sentence in {@code text}.
+     * Used by force-upper (capsOverride=1).
+     */
+    private String uppercaseSentenceStarts(String text) {
+        if (text == null || text.isEmpty()) return text;
+        StringBuilder sb = new StringBuilder(text);
+        if (Character.isLowerCase(sb.charAt(0))) {
+            sb.setCharAt(0, Character.toUpperCase(sb.charAt(0)));
+        }
+        for (int i = 1; i < sb.length() - 1; i++) {
+            char punct = sb.charAt(i - 1);
+            char space = sb.charAt(i);
+            char next  = sb.charAt(i + 1);
+            if ((punct == '.' || punct == '!' || punct == '?')
+                    && space == ' ' && Character.isLowerCase(next)) {
+                sb.setCharAt(i + 1, Character.toUpperCase(next));
+            }
+        }
+        return sb.toString();
     }
 
     /**
