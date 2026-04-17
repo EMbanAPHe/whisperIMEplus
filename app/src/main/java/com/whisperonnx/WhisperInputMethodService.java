@@ -235,8 +235,6 @@ public class WhisperInputMethodService extends InputMethodService {
     private ImageButton  btnMenuSwap;     // Swap to/from secondary layout
     private LinearLayout layoutPrimary;   // Primary layout container
     private LinearLayout layoutSecondary; // Secondary layout container (audio paused)
-    private TextView     btnSecStreaming; // Streaming toggle label in secondary layout
-    private TextView     btnSecLang;      // Language display label in secondary layout
 
     /**
      * Capitalisation override applied to each Whisper result:
@@ -531,8 +529,6 @@ public class WhisperInputMethodService extends InputMethodService {
         btnMenuSwap     = view.findViewById(R.id.btnMenuSwap);
         layoutPrimary   = view.findViewById(R.id.layout_primary);
         layoutSecondary = view.findViewById(R.id.layout_secondary);
-        btnSecStreaming  = view.findViewById(R.id.btnSecStreaming);
-        btnSecLang      = view.findViewById(R.id.btnSecLang);
 
         // Restore caps icon in case of orientation change/re-inflation
         updateCapsIcon();
@@ -714,60 +710,9 @@ public class WhisperInputMethodService extends InputMethodService {
             switchToPreviousInputMethod();
         });
         // Streaming toggle in secondary layout
-        if (btnSecStreaming != null) btnSecStreaming.setOnClickListener(v -> {
-            tap(v);
-            prefAutoStop = !prefAutoStop;
-            if (sp != null) sp.edit().putBoolean("imeAutoStop", prefAutoStop).apply();
-            updateSecondaryLabels();
-        });
         // Language display (tap to cycle through common languages)
-        final String[] LANG_CYCLE = {"auto", "en", "fr", "de", "es", "zh", "ja", "ar"};
-        if (btnSecLang != null) btnSecLang.setOnClickListener(v -> {
-            tap(v);
-            String cur = sp != null ? sp.getString("language", "auto") : "auto";
-            int idx = 0;
-            for (int i = 0; i < LANG_CYCLE.length; i++) {
-                if (LANG_CYCLE[i].equals(cur)) { idx = i; break; }
-            }
-            String next = LANG_CYCLE[(idx + 1) % LANG_CYCLE.length];
-            if (sp != null) sp.edit().putString("language", next).apply();
-            sessionLanguage = ""; // reset session lock
-            updateSecondaryLabels();
-        });
-        // Settings shortcut
-        View btnSecSet = view.findViewById(R.id.btnSecSettings);
-        if (btnSecSet != null) btnSecSet.setOnClickListener(v -> {
-            tap(v);
-            android.content.Intent intent = new android.content.Intent(this,
-                    com.whisperonnx.SettingsActivity.class);
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        });
-        // Switch IME from secondary
-        View btnSecSwitch = view.findViewById(R.id.btnSecSwitchIme);
-        if (btnSecSwitch != null) btnSecSwitch.setOnClickListener(v -> {
-            tap(v);
-            switchToPreviousInputMethod();
-        });
-        // Secondary layout: left col text-edit buttons
-        View btnSecU = view.findViewById(R.id.btnSecUndo);
-        View btnSecR = view.findViewById(R.id.btnSecRedo);
-        View btnSecSA = view.findViewById(R.id.btnSecSelAll);
-        View btnSecCl = view.findViewById(R.id.btnSecClear);
+        // Secondary layout: menu swap button (left col bottom)
         View btnSecMe = view.findViewById(R.id.btnSecMenu);
-        if (btnSecU  != null) btnSecU.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
-        if (btnSecR  != null) btnSecR.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true);  });
-        if (btnSecSA != null) btnSecSA.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_A, false); });
-        if (btnSecCl != null) btnSecCl.setOnClickListener(v -> {
-            tap(v);
-            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-            if (ic == null) return;
-            CharSequence before = ic.getTextBeforeCursor(10000, 0);
-            CharSequence after  = ic.getTextAfterCursor(10000, 0);
-            if (before == null) before = "";
-            if (after  == null) after  = "";
-            ic.deleteSurroundingText(before.length(), after.length());
-        });
         if (btnSecMe != null) btnSecMe.setOnClickListener(v -> { tap(v); toggleSecondaryLayout(); });
         // Secondary layout: right col text-edit buttons
         View btnScCut = view.findViewById(R.id.btnSecCut);
@@ -1862,13 +1807,7 @@ public class WhisperInputMethodService extends InputMethodService {
      * Called whenever the secondary layout is shown or a value changes.
      */
     private void updateSecondaryLabels() {
-        if (btnSecStreaming != null) {
-            btnSecStreaming.setText("Stream\n" + (prefAutoStop ? "[ON]" : "[OFF]"));
-        }
-        if (btnSecLang != null) {
-            String lang = sp != null ? sp.getString("language", "auto") : "auto";
-            btnSecLang.setText("Lang\n[" + lang + "]");
-        }
+        // Labels removed in v13 — method retained for future use.
     }
 
     private void stopListeningGracefully() {
