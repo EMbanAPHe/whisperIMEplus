@@ -1,32 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    D-pad: 4 solid arrow-heads pushed near the outer edges.
-    No center section, no stems. Viewport 24x24, centre at 12,12.
-    The arrows sit inside a faint circle to show the drag zone.
+    D-pad cross: 4 rounded-outer-corner arms with chamfered (45°) inner corners.
+    Viewport 24×24. Arm half-width = 3.5 (arms from 8.5 to 15.5).
+    Outer edge = 1.5. Chamfer = 2.  Outer corner radius ≈ 1.5.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="36dp" android:height="36dp"
     android:viewportWidth="24" android:viewportHeight="24">
 
-    <!-- Faint background circle — shows this is a drag zone -->
-    <path android:strokeColor="#22FFFFFF" android:strokeWidth="0.6"
-          android:fillColor="#00000000"
-          android:pathData="M12,2 A10,10 0 1,0 12,22 A10,10 0 1,0 12,2 Z"/>
-
-    <!-- Up arrow — near top edge -->
     <path android:fillColor="#CCFFFFFF"
-          android:pathData="M12,2.5 L9,7.5 L11.2,7.5 L11.2,10.5 L12.8,10.5 L12.8,7.5 L15,7.5 Z"/>
-
-    <!-- Down arrow — near bottom edge -->
-    <path android:fillColor="#CCFFFFFF"
-          android:pathData="M12,21.5 L15,16.5 L12.8,16.5 L12.8,13.5 L11.2,13.5 L11.2,16.5 L9,16.5 Z"/>
-
-    <!-- Left arrow — near left edge -->
-    <path android:fillColor="#CCFFFFFF"
-          android:pathData="M2.5,12 L7.5,9 L7.5,11.2 L10.5,11.2 L10.5,12.8 L7.5,12.8 L7.5,15 Z"/>
-
-    <!-- Right arrow — near right edge -->
-    <path android:fillColor="#CCFFFFFF"
-          android:pathData="M21.5,12 L16.5,15 L16.5,12.8 L13.5,12.8 L13.5,11.2 L16.5,11.2 L16.5,9 Z"/>
+          android:pathData="
+M 8.5,3
+Q 8.5,1.5 10,1.5
+L 14,1.5
+Q 15.5,1.5 15.5,3
+L 15.5,6.5
+L 17.5,8.5
+L 21,8.5
+Q 22.5,8.5 22.5,10
+L 22.5,14
+Q 22.5,15.5 21,15.5
+L 17.5,15.5
+L 15.5,17.5
+L 15.5,21
+Q 15.5,22.5 14,22.5
+L 10,22.5
+Q 8.5,22.5 8.5,21
+L 8.5,17.5
+L 6.5,15.5
+L 3,15.5
+Q 1.5,15.5 1.5,14
+L 1.5,10
+Q 1.5,8.5 3,8.5
+L 6.5,8.5
+L 8.5,6.5
+Z"/>
 
 </vector>

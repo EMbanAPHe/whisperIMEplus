@@ -466,11 +466,11 @@
                 android:orientation="vertical"
                 android:visibility="gone">
 
-                <!-- Top row (weight 17 = same height as one Del-Unselected row) -->
+                <!-- Top row (weight 35 = matches primary toolbar 35% height) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="17"
+                    android:layout_weight="35"
                     android:orientation="horizontal">
 
                     <!-- KB button: same proportional width as in primary (weight 1.5) -->
@@ -498,7 +498,7 @@
                         android:text="Shift"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="11sp"
+                        android:textSize="13sp"
                         android:alpha="0.55" />
 
                     <!-- Ctrl -->
@@ -512,7 +512,7 @@
                         android:text="Ctrl"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="11sp"
+                        android:textSize="13sp"
                         android:alpha="0.55" />
 
                     <!-- Alt -->
@@ -526,7 +526,7 @@
                         android:text="Alt"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="11sp"
+                        android:textSize="13sp"
                         android:alpha="0.55" />
 
                     <!-- Tab -->
@@ -540,7 +540,7 @@
                         android:text="Tab"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="11sp" />
+                        android:textSize="13sp" />
 
                     <!-- Esc — slightly wider (top-right) to absorb remaining space -->
                     <TextView
@@ -552,16 +552,16 @@
                         android:text="Esc"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="11sp" />
+                        android:textSize="13sp" />
 
                 </LinearLayout>
 
-                <!-- Bottom section (weight 83): left col | D-pad | right col -->
+                <!-- Bottom section (weight 65 = matches primary mic area 65% height) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="83"
-                    android:layout_marginTop="4dp"
+                    android:layout_weight="65"
+                    android:layout_marginTop="5dp"
                     android:orientation="horizontal">
 
                     <!-- Left column (weight 1 = 1/3 of right-col width) -->
@@ -581,7 +581,7 @@
                             android:text="Home"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="11sp" />
+                            android:textSize="13sp" />
 
                         <!-- 2nd button — absorbs any leftover height -->
                         <TextView
@@ -594,7 +594,7 @@
                             android:text="End"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="11sp" />
+                            android:textSize="13sp" />
 
                         <TextView
                             android:id="@+id/btnSecPgUp"
@@ -606,7 +606,7 @@
                             android:text="PgUp"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="11sp" />
+                            android:textSize="13sp" />
 
                         <TextView
                             android:id="@+id/btnSecPgDn"
@@ -618,7 +618,7 @@
                             android:text="PgDn"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="11sp" />
+                            android:textSize="13sp" />
 
                         <!-- Menu swap — always at bottom of left column -->
                         <ImageButton
@@ -644,14 +644,15 @@
                         android:layout_weight="4.5"
                         android:background="@drawable/rounded_button_tonal">
 
-                        <!-- D-pad arrows displayed over background; touch handled on parent -->
+                        <!-- D-pad cross shape centred, touch handled on parent FrameLayout -->
                         <ImageView
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
                             android:src="@drawable/ic_dpad"
-                            android:scaleType="fitXY"
+                            android:scaleType="fitCenter"
                             android:contentDescription="D-pad"
-                            android:importantForAccessibility="no" />
+                            android:importantForAccessibility="no"
+                            android:padding="8dp" />
 
                     </FrameLayout>
 

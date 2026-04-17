@@ -815,21 +815,34 @@ public class WhisperInputMethodService extends InputMethodService {
                                 String txt = et.text.toString();
                                 dpadText[0]   = txt;
                                 dpadTxtLen[0] = txt.length();
-                                int cursorPos = et.selectionStart;
-                                dpadAnchor[0] = cursorPos;
-                                dpadLastPos[0]= cursorPos;
-                                // Find line and column of cursor
+
+                                // If shift is held AND there is an existing selection,
+                                // preserve the selection anchor so the user can continue
+                                // extending the highlight after releasing and re-touching.
+                                // The moving end is selectionEnd; anchor stays at selectionStart.
+                                // If no selection exists yet, anchor = cursor position as normal.
+                                int anchorPos, cursorPos;
+                                if (shiftActive && et.selectionEnd > et.selectionStart) {
+                                    anchorPos = et.selectionStart;
+                                    cursorPos = et.selectionEnd;   // drag continues from moving end
+                                } else {
+                                    anchorPos = et.selectionStart;
+                                    cursorPos = et.selectionStart;
+                                }
+                                dpadAnchor[0]  = anchorPos;
+                                dpadLastPos[0] = cursorPos;
+
+                                // Locate cursor (the moving end) in line/col space
                                 String[] lines = txt.split("\n", -1);
-                                int lineStart = 0, lineIdx = 0;
+                                int lineStart = 0;
                                 for (int li = 0; li < lines.length; li++) {
                                     int lineEnd = lineStart + lines[li].length();
                                     if (cursorPos <= lineEnd || li == lines.length - 1) {
-                                        lineIdx = li;
                                         dpadCurLine[0] = li;
                                         dpadCurCol[0]  = cursorPos - lineStart;
                                         break;
                                     }
-                                    lineStart += lines[li].length() + 1; // +1 for \n
+                                    lineStart += lines[li].length() + 1;
                                 }
                             } else {
                                 dpadText[0] = ""; dpadTxtLen[0] = 0; dpadAnchor[0] = -1;
