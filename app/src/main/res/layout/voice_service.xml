@@ -498,7 +498,7 @@
                         android:text="Shift"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="18sp"
+                        android:textSize="11sp"
                         android:alpha="0.55" />
 
                     <!-- Ctrl -->
@@ -540,7 +540,7 @@
                         android:text="Tab"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="16sp" />
+                        android:textSize="11sp" />
 
                     <!-- Esc — slightly wider (top-right) to absorb remaining space -->
                     <TextView
@@ -581,7 +581,7 @@
                             android:text="Home"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="10sp" />
+                            android:textSize="11sp" />
 
                         <!-- 2nd button — absorbs any leftover height -->
                         <TextView
@@ -594,7 +594,7 @@
                             android:text="End"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="10sp" />
+                            android:textSize="11sp" />
 
                         <TextView
                             android:id="@+id/btnSecPgUp"
@@ -606,7 +606,7 @@
                             android:text="PgUp"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="10sp" />
+                            android:textSize="11sp" />
 
                         <TextView
                             android:id="@+id/btnSecPgDn"
@@ -618,7 +618,7 @@
                             android:text="PgDn"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="10sp" />
+                            android:textSize="11sp" />
 
                         <!-- Menu swap — always at bottom of left column -->
                         <ImageButton
@@ -636,22 +636,22 @@
 
                     <Space android:layout_width="4dp" android:layout_height="match_parent" />
 
-                    <!-- Centre — D-pad drag + tap zones -->
+                    <!-- Centre — D-pad drag + tap zones (whole area is the touch target) -->
                     <FrameLayout
+                        android:id="@+id/btnDpad"
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
                         android:layout_weight="4.5"
                         android:background="@drawable/rounded_button_tonal">
 
-                        <!-- D-pad icon centred — user taps/drags around it -->
+                        <!-- D-pad arrows displayed over background; touch handled on parent -->
                         <ImageView
-                            android:id="@+id/btnDpad"
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
                             android:src="@drawable/ic_dpad"
-                            android:scaleType="fitCenter"
+                            android:scaleType="fitXY"
                             android:contentDescription="D-pad"
-                            android:padding="16dp" />
+                            android:importantForAccessibility="no" />
 
                     </FrameLayout>
 

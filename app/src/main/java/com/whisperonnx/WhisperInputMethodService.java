@@ -764,96 +764,139 @@ public class WhisperInputMethodService extends InputMethodService {
 
         // ── D-pad — drag from center + tap zones at edges ──────────────────
         if (btnDpad != null) {
+            // ── How production keyboards approach a drag touchpad ──────────────
+            // FlorisBoard / Gboard / SwiftKey all use pure setSelection() — they
+            // never send DPAD key events during drag.  The reason: DPAD events
+            // travel through the view-focus system and are unreliable across apps
+            // (the "flash then return" symptom is the app receiving DOWN then
+            // immediately re-focusing back).  setSelection() is an InputConnection
+            // call that bypasses focus routing entirely and is idempotent.
+            //
+            // For vertical movement they snapshot the full text at ACTION_DOWN,
+            // split it by '\n' to find line lengths, locate the cursor's line and
+            // column, then move N lines and clamp to that line's length.
+            // Horizontal = absolute setSelection within the same line.
+            // This way both axes use the same setSelection() call; there is no
+            // conflict and no direction lock.
+            //
+            // The touch target is the full FrameLayout background (id=btnDpad),
+            // so the user can start dragging anywhere on the D-pad area.
+
             final android.util.DisplayMetrics dmDpad = getResources().getDisplayMetrics();
-            final float H_SENS = 8f * dmDpad.density;   // px per char, horizontal drag
-            final float V_SENS = 28f * dmDpad.density;  // px per line, vertical drag
-            final float DRAG_THRESHOLD = 8f * dmDpad.density;
-            final float[] dpadDown    = {0f, 0f};
-            final int[]   dpadCurSt   = {-1};   // cursor pos at touch-down
-            final int[]   dpadSelAnch = {-1};   // selection anchor for shift+drag
-            final int[]   dpadTxtLen  = {0};
-            final int[]   dpadLastH   = {-1};   // last cursor pos (haptic gate)
-            final int[]   dpadLastV   = {0};    // last vertical step count
-            final boolean[] dpadDrag  = {false};
-            final boolean[] dpadMoved = {false};
+            final float H_SENS        = 7f * dmDpad.density;  // px per character
+            final float V_SENS        = 26f * dmDpad.density; // px per line
+            final float DRAG_THRESHOLD = 6f * dmDpad.density;
+
+            // State arrays (captured by lambda)
+            final float[]   dpadDown    = {0f, 0f};
+            final int[]     dpadCurLine = {0};    // cursor line index at touch-down
+            final int[]     dpadCurCol  = {0};    // cursor column at touch-down
+            final int[]     dpadAnchor  = {-1};   // selection anchor (shift mode)
+            final int[]     dpadLastPos = {-1};   // last setSelection target (haptic gate)
+            final String[]  dpadText    = {""};   // full text snapshot at touch-down
+            final int[]     dpadTxtLen  = {0};
+            final boolean[] dpadDrag    = {false};
+            final boolean[] dpadMoved   = {false};
 
             btnDpad.setOnTouchListener((v, ev) -> {
                 float x = ev.getX(), y = ev.getY();
                 float vW = v.getWidth(), vH = v.getHeight();
+
                 switch (ev.getAction()) {
                     case MotionEvent.ACTION_DOWN: {
                         dpadDown[0] = x; dpadDown[1] = y;
                         dpadDrag[0] = false; dpadMoved[0] = false;
-                        dpadLastV[0] = 0;
                         android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
                         if (ic != null) {
-                            android.view.inputmethod.ExtractedText et =
-                                    ic.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                            android.view.inputmethod.ExtractedTextRequest req =
+                                    new android.view.inputmethod.ExtractedTextRequest();
+                            android.view.inputmethod.ExtractedText et = ic.getExtractedText(req, 0);
                             if (et != null && et.text != null) {
-                                dpadCurSt[0]   = et.selectionStart;
-                                dpadSelAnch[0] = et.selectionStart;
-                                dpadTxtLen[0]  = et.text.length();
-                                dpadLastH[0]   = et.selectionStart;
-                            } else { dpadCurSt[0] = -1; }
+                                String txt = et.text.toString();
+                                dpadText[0]   = txt;
+                                dpadTxtLen[0] = txt.length();
+                                int cursorPos = et.selectionStart;
+                                dpadAnchor[0] = cursorPos;
+                                dpadLastPos[0]= cursorPos;
+                                // Find line and column of cursor
+                                String[] lines = txt.split("\n", -1);
+                                int lineStart = 0, lineIdx = 0;
+                                for (int li = 0; li < lines.length; li++) {
+                                    int lineEnd = lineStart + lines[li].length();
+                                    if (cursorPos <= lineEnd || li == lines.length - 1) {
+                                        lineIdx = li;
+                                        dpadCurLine[0] = li;
+                                        dpadCurCol[0]  = cursorPos - lineStart;
+                                        break;
+                                    }
+                                    lineStart += lines[li].length() + 1; // +1 for \n
+                                }
+                            } else {
+                                dpadText[0] = ""; dpadTxtLen[0] = 0; dpadAnchor[0] = -1;
+                            }
                         }
                         break;
                     }
+
                     case MotionEvent.ACTION_MOVE: {
                         float dx = x - dpadDown[0], dy = y - dpadDown[1];
                         float dist = (float) Math.sqrt(dx * dx + dy * dy);
                         if (!dpadDrag[0] && dist > DRAG_THRESHOLD) {
                             dpadDrag[0] = true; dpadMoved[0] = true;
                         }
-                        if (!dpadDrag[0]) break;
+                        if (!dpadDrag[0] || dpadAnchor[0] < 0) break;
+
+                        // ── Compute target position from drag, using text layout ─────
+                        // charDelta : horizontal character offset from start column
+                        // lineDelta : vertical line offset from start line
+                        int charDelta = (int)(dx / H_SENS);
+                        int lineDelta = (int)(dy / V_SENS);
+
+                        String[] lines = dpadText[0].split("\n", -1);
+                        int targetLine = Math.max(0, Math.min(lines.length - 1,
+                                dpadCurLine[0] + lineDelta));
+                        int targetCol  = Math.max(0, Math.min(lines[targetLine].length(),
+                                dpadCurCol[0] + charDelta));
+
+                        // Convert (targetLine, targetCol) → absolute character offset
+                        int offset = 0;
+                        for (int li = 0; li < targetLine; li++) {
+                            offset += lines[li].length() + 1; // +1 for \n
+                        }
+                        offset += targetCol;
+                        offset = Math.max(0, Math.min(dpadTxtLen[0], offset));
+
+                        // ── Apply selection or cursor move ─────────────────────────
                         android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-                        // ── Horizontal axis: absolute setSelection (no direction lock) ──
-                        // Always computed from total dx so direction changes freely.
-                        if (dpadCurSt[0] >= 0 && ic != null) {
-                            int charDelta = (int)(dx / H_SENS);
-                            int target = Math.max(0, Math.min(dpadTxtLen[0], dpadCurSt[0] + charDelta));
-                            // Shift held: keep selection anchor, move active end.
-                            // No shift: collapse selection to cursor position.
-                            if (shiftActive) ic.setSelection(dpadSelAnch[0], target);
-                            else             ic.setSelection(target, target);
-                            if (target != dpadLastH[0]) {
-                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                        HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                                if (mRecorder != null) mRecorder.suppressVadTrigger(250);
-                                dpadLastH[0] = target;
+                        if (ic != null) {
+                            if (shiftActive) {
+                                // Shift held: extend selection from the touch-down anchor
+                                ic.setSelection(dpadAnchor[0], offset);
+                            } else {
+                                ic.setSelection(offset, offset);
                             }
                         }
-                        // ── Vertical axis: incremental DPAD_UP/DOWN (no direction lock) ──
-                        // Computed from total dy so reversing direction works naturally.
-                        {
-                            int steps = (int)(dy / V_SENS);
-                            int diff  = steps - dpadLastV[0];
-                            if (diff != 0 && ic != null) {
-                                int kc = diff > 0 ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP;
-                                int meta = 0;
-                                if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
-                                if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
-                                for (int i = 0; i < Math.abs(diff); i++) {
-                                    long t = android.os.SystemClock.uptimeMillis();
-                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
-                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
-                                }
-                                dpadLastV[0] = steps;
-                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                        HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                            }
+
+                        // Haptic on every character or line boundary crossed
+                        if (offset != dpadLastPos[0]) {
+                            v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
+                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                            if (mRecorder != null) mRecorder.suppressVadTrigger(250);
+                            dpadLastPos[0] = offset;
                         }
                         break;
                     }
+
                     case MotionEvent.ACTION_UP: {
                         if (!dpadMoved[0]) {
-                            // Tap — determine zone from position within view
+                            // Tap: determine zone from where the finger lifted
                             float relX = vW > 0 ? x / vW : 0.5f;
                             float relY = vH > 0 ? y / vH : 0.5f;
                             int kc = 0;
-                            if      (relY < 0.28f) kc = KeyEvent.KEYCODE_DPAD_UP;
-                            else if (relY > 0.72f) kc = KeyEvent.KEYCODE_DPAD_DOWN;
-                            else if (relX < 0.28f) kc = KeyEvent.KEYCODE_DPAD_LEFT;
-                            else if (relX > 0.72f) kc = KeyEvent.KEYCODE_DPAD_RIGHT;
+                            if      (relY < 0.30f) kc = KeyEvent.KEYCODE_DPAD_UP;
+                            else if (relY > 0.70f) kc = KeyEvent.KEYCODE_DPAD_DOWN;
+                            else if (relX < 0.30f) kc = KeyEvent.KEYCODE_DPAD_LEFT;
+                            else if (relX > 0.70f) kc = KeyEvent.KEYCODE_DPAD_RIGHT;
                             if (kc != 0) {
                                 tap(v);
                                 android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
@@ -870,10 +913,12 @@ public class WhisperInputMethodService extends InputMethodService {
                         }
                         break;
                     }
+                    default: break;
                 }
                 return true;
             });
         }
+
 
         // Secondary layout — Tab and Esc buttons
         View btnSecTab = view.findViewById(R.id.btnSecTab);
