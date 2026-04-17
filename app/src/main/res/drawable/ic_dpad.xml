@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp" android:height="36dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Subtle cross arms -->
+    <path android:fillColor="#33FFFFFF"
+          android:pathData="M10.5,10.5h3v3h-3z"/>
+    <path android:fillColor="#22FFFFFF"
+          android:pathData="M11,4h2v6.5h-2zM11,13.5h2V20h-2zM4,11h6.5v2H4zM13.5,11H20v2h-6.5z"/>
+    <!-- Up arrow -->
+    <path android:fillColor="#CCFFFFFF"
+          android:pathData="M12,3L9,7h2v2h2V7h2z"/>
+    <!-- Down arrow -->
+    <path android:fillColor="#CCFFFFFF"
+          android:pathData="M12,21L9,17h2v-2h2v2h2z"/>
+    <!-- Left arrow -->
+    <path android:fillColor="#CCFFFFFF"
+          android:pathData="M3,12L7,9v2h2v2H7v2z"/>
+    <!-- Right arrow -->
+    <path android:fillColor="#CCFFFFFF"
+          android:pathData="M21,12L17,9v2h-2v2h2v2z"/>
+    <!-- Centre dot (drag handle) -->
+    <path android:fillColor="#AAFFFFFF"
+          android:pathData="M12,10.5a1.5,1.5 0 1,0 0,3 1.5,1.5 0 0,0 0,-3z"/>
+</vector>

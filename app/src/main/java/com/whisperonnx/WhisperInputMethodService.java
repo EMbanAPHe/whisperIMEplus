@@ -255,6 +255,20 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private boolean wasListeningBeforeSecondary = false;
 
+    // ── v12 modifier-key state ────────────────────────────────────────────────
+    /** Shift is toggled on — next D-pad direction extends selection. */
+    private boolean shiftActive = false;
+    /** Ctrl modifier active — sent with the next key event. */
+    private boolean ctrlActive  = false;
+    /** Alt modifier active — sent with the next key event. */
+    private boolean altActive   = false;
+    /** Refs to modifier buttons so we can update their visual state. */
+    private View btnSecShift;
+    private View btnSecCtrl;
+    private View btnSecAlt;
+    /** Ref to D-pad area for reset on layout switch. */
+    private View btnDpad;
+
     // Long-press repeat runnables - stored as fields so onFinishInputView can cancel them
     private Runnable delInitial;
     private Runnable delFast;
@@ -522,6 +536,13 @@ public class WhisperInputMethodService extends InputMethodService {
 
         // Restore caps icon in case of orientation change/re-inflation
         updateCapsIcon();
+        // v12 modifier + D-pad bindings
+        btnSecShift = view.findViewById(R.id.btnSecShift);
+        btnSecCtrl  = view.findViewById(R.id.btnSecCtrl);
+        btnSecAlt   = view.findViewById(R.id.btnSecAlt);
+        btnDpad     = view.findViewById(R.id.btnDpad);
+        // Restore modifier visual state after re-inflation
+        updateModifierUI();
 
         // Size the keyboard panel to match FlorisBoard's default height
         setKeyboardHeight();
@@ -783,6 +804,196 @@ public class WhisperInputMethodService extends InputMethodService {
             long t = android.os.SystemClock.uptimeMillis();
             ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
             ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
+        });
+
+        // ── Modifier keys (Shift / Ctrl / Alt) ──────────────────────────────
+        if (btnSecShift != null) btnSecShift.setOnClickListener(v -> {
+            tap(v); shiftActive = !shiftActive; updateModifierUI();
+        });
+        if (btnSecCtrl != null) btnSecCtrl.setOnClickListener(v -> {
+            tap(v); ctrlActive = !ctrlActive; updateModifierUI();
+        });
+        if (btnSecAlt != null) btnSecAlt.setOnClickListener(v -> {
+            tap(v); altActive = !altActive; updateModifierUI();
+        });
+
+        // ── D-pad — drag from center + tap zones at edges ──────────────────
+        if (btnDpad != null) {
+            final android.util.DisplayMetrics dmDpad = getResources().getDisplayMetrics();
+            final float H_SENS = 8f * dmDpad.density;   // px per char, horizontal drag
+            final float V_SENS = 28f * dmDpad.density;  // px per line, vertical drag
+            final float DRAG_THRESHOLD = 8f * dmDpad.density;
+            final float[] dpadDown    = {0f, 0f};
+            final int[]   dpadCurSt   = {-1};   // cursor pos at touch-down
+            final int[]   dpadSelAnch = {-1};   // selection anchor for shift+drag
+            final int[]   dpadTxtLen  = {0};
+            final int[]   dpadLastH   = {-1};   // last cursor pos (haptic gate)
+            final int[]   dpadLastV   = {0};    // last vertical step count
+            final boolean[] dpadDrag  = {false};
+            final boolean[] dpadMoved = {false};
+
+            btnDpad.setOnTouchListener((v, ev) -> {
+                float x = ev.getX(), y = ev.getY();
+                float vW = v.getWidth(), vH = v.getHeight();
+                switch (ev.getAction()) {
+                    case MotionEvent.ACTION_DOWN: {
+                        dpadDown[0] = x; dpadDown[1] = y;
+                        dpadDrag[0] = false; dpadMoved[0] = false;
+                        dpadLastV[0] = 0;
+                        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                        if (ic != null) {
+                            android.view.inputmethod.ExtractedText et =
+                                    ic.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                            if (et != null && et.text != null) {
+                                dpadCurSt[0]   = et.selectionStart;
+                                dpadSelAnch[0] = et.selectionStart;
+                                dpadTxtLen[0]  = et.text.length();
+                                dpadLastH[0]   = et.selectionStart;
+                            } else { dpadCurSt[0] = -1; }
+                        }
+                        break;
+                    }
+                    case MotionEvent.ACTION_MOVE: {
+                        float dx = x - dpadDown[0], dy = y - dpadDown[1];
+                        float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                        if (!dpadDrag[0] && dist > DRAG_THRESHOLD) {
+                            dpadDrag[0] = true; dpadMoved[0] = true;
+                        }
+                        if (!dpadDrag[0]) break;
+                        if (Math.abs(dx) >= Math.abs(dy)) {
+                            // Horizontal — absolute setSelection like spacebar
+                            if (dpadCurSt[0] < 0) break;
+                            int charDelta = (int)(dx / H_SENS);
+                            int target = Math.max(0, Math.min(dpadTxtLen[0], dpadCurSt[0] + charDelta));
+                            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                            if (ic != null) {
+                                if (shiftActive) ic.setSelection(dpadSelAnch[0], target);
+                                else             ic.setSelection(target, target);
+                            }
+                            if (target != dpadLastH[0]) {
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
+                                        HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                                if (mRecorder != null) mRecorder.suppressVadTrigger(250);
+                                dpadLastH[0] = target;
+                            }
+                        } else {
+                            // Vertical — incremental DPAD_UP/DOWN
+                            int steps = (int)(dy / V_SENS);
+                            int diff  = steps - dpadLastV[0];
+                            if (diff != 0) {
+                                int kc = diff > 0 ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP;
+                                int meta = 0;
+                                if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
+                                android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                                if (ic != null) {
+                                    for (int i = 0; i < Math.abs(diff); i++) {
+                                        long t = android.os.SystemClock.uptimeMillis();
+                                        ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
+                                        ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
+                                    }
+                                }
+                                dpadLastV[0] = steps;
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
+                                        HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                            }
+                        }
+                        break;
+                    }
+                    case MotionEvent.ACTION_UP: {
+                        if (!dpadMoved[0]) {
+                            // Tap — determine zone from position within view
+                            float relX = vW > 0 ? x / vW : 0.5f;
+                            float relY = vH > 0 ? y / vH : 0.5f;
+                            int kc = 0;
+                            if      (relY < 0.28f) kc = KeyEvent.KEYCODE_DPAD_UP;
+                            else if (relY > 0.72f) kc = KeyEvent.KEYCODE_DPAD_DOWN;
+                            else if (relX < 0.28f) kc = KeyEvent.KEYCODE_DPAD_LEFT;
+                            else if (relX > 0.72f) kc = KeyEvent.KEYCODE_DPAD_RIGHT;
+                            if (kc != 0) {
+                                tap(v);
+                                android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                                if (ic != null) {
+                                    int meta = 0;
+                                    if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
+                                    if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
+                                    if (altActive)   meta |= KeyEvent.META_ALT_ON;
+                                    long t = android.os.SystemClock.uptimeMillis();
+                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
+                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                return true;
+            });
+        }
+
+        // Secondary layout — Tab and Esc buttons
+        View btnSecTab = view.findViewById(R.id.btnSecTab);
+        View btnSecEsc = view.findViewById(R.id.btnSecEsc);
+        View btnSecHome = view.findViewById(R.id.btnSecHome);
+        View btnSecEnd  = view.findViewById(R.id.btnSecEnd);
+        View btnSecPgUp = view.findViewById(R.id.btnSecPgUp);
+        View btnSecPgDn = view.findViewById(R.id.btnSecPgDn);
+        if (btnSecTab  != null) btnSecTab.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_TAB, 0));
+            }
+        });
+        if (btnSecEsc  != null) btnSecEsc.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ESCAPE, 0));
+            }
+        });
+        if (btnSecHome != null) btnSecHome.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                int meta = shiftActive ? KeyEvent.META_SHIFT_ON : 0;
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MOVE_HOME, 0, meta));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_MOVE_HOME, 0, meta));
+            }
+        });
+        if (btnSecEnd  != null) btnSecEnd.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                int meta = shiftActive ? KeyEvent.META_SHIFT_ON : 0;
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MOVE_END, 0, meta));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_MOVE_END, 0, meta));
+            }
+        });
+        if (btnSecPgUp != null) btnSecPgUp.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                int meta = shiftActive ? KeyEvent.META_SHIFT_ON : 0;
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PAGE_UP, 0, meta));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_PAGE_UP, 0, meta));
+            }
+        });
+        if (btnSecPgDn != null) btnSecPgDn.setOnClickListener(v -> {
+            tap(v);
+            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+            if (ic != null) {
+                int meta = shiftActive ? KeyEvent.META_SHIFT_ON : 0;
+                long t = android.os.SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, 0, meta));
+                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_PAGE_DOWN, 0, meta));
+            }
         });
 
         // ── Full Stop / Punctuation toggle — tap toggles popup open/closed ──────
@@ -1171,21 +1382,9 @@ public class WhisperInputMethodService extends InputMethodService {
                 //   capitalises first char, so lower it if the pref says not to).
                 // capsOverride 1 = force upper: ensure first char is uppercase.
                 // capsOverride 2 = force lower: always lowercase the first char.
-                if (capsOverride == 1) {
-                    if (result.length() > 0 && Character.isLowerCase(result.charAt(0))) {
-                        result = Character.toUpperCase(result.charAt(0)) + result.substring(1);
-                    }
-                } else if (capsOverride == 2) {
-                    if (result.length() > 0 && Character.isUpperCase(result.charAt(0))) {
-                        result = Character.toLowerCase(result.charAt(0)) + result.substring(1);
-                    }
-                } else {
-                    // Auto: respect user preference (Whisper always capitalises)
-                    if (!prefAutoCapitalise && result.length() > 0
-                            && Character.isUpperCase(result.charAt(0))) {
-                        result = Character.toLowerCase(result.charAt(0)) + result.substring(1);
-                    }
-                }
+                // applyCapitalization handles every sentence in the result block,
+                // not just the first character — Whisper may return multiple sentences.
+                result = applyCapitalization(result);
 
                 // Commit text — guarded by session check on this thread
                 final String trimmed = result.trim();
@@ -1527,6 +1726,71 @@ public class WhisperInputMethodService extends InputMethodService {
      * Unlike discardAudioAndContinue(), the captured audio IS committed — this
      * is a manual VAD trigger, not a discard. Only callable while a session is active.
      */
+    // ── v12 capitalisation helpers ────────────────────────────────────────────
+
+    /**
+     * Apply capsOverride (or prefAutoCapitalise) to an entire Whisper result.
+     * Whisper may return multiple sentences in one block (e.g. "Hello. How are you?").
+     * All sentence-starting capitals must be handled, not just the very first character.
+     */
+    private String applyCapitalization(String text) {
+        if (text == null || text.isEmpty()) return text;
+        if (capsOverride == 1) {
+            // Force uppercase: ensure the first character of the result is capitalised.
+            // Whisper already capitalises each sentence, so only the first char matters.
+            if (Character.isLowerCase(text.charAt(0))) {
+                return Character.toUpperCase(text.charAt(0)) + text.substring(1);
+            }
+            return text;
+        } else if (capsOverride == 2) {
+            // Force lowercase: strip all sentence-start capitals Whisper inserted.
+            return lowercaseSentenceStarts(text);
+        } else {
+            // Auto: honour prefAutoCapitalise setting.
+            if (!prefAutoCapitalise) {
+                return lowercaseSentenceStarts(text);
+            }
+            return text; // keep Whisper's capitalisation
+        }
+    }
+
+    /**
+     * Lowercase the first letter of every sentence in {@code text}.
+     * Targets the first character and any uppercase letter that immediately follows
+     * a sentence-ending punctuation mark ({@code .}, {@code !}, {@code ?}) and a space.
+     */
+    private String lowercaseSentenceStarts(String text) {
+        if (text == null || text.isEmpty()) return text;
+        StringBuilder sb = new StringBuilder(text);
+        // First character of the whole result
+        if (Character.isUpperCase(sb.charAt(0))) {
+            sb.setCharAt(0, Character.toLowerCase(sb.charAt(0)));
+        }
+        // Subsequent sentence starts: look for ". X", "! X", "? X" patterns
+        for (int i = 1; i < sb.length() - 1; i++) {
+            char punct = sb.charAt(i - 1);
+            char space = sb.charAt(i);
+            char next  = sb.charAt(i + 1);
+            if ((punct == '.' || punct == '!' || punct == '?')
+                    && space == ' ' && Character.isUpperCase(next)) {
+                sb.setCharAt(i + 1, Character.toLowerCase(next));
+            }
+        }
+        return sb.toString();
+    }
+
+    // ── v12 modifier UI ────────────────────────────────────────────────────────
+
+    /**
+     * Highlight active modifier buttons (Shift / Ctrl / Alt) so the user can see
+     * which modifiers are currently toggled on.  Active = full opacity, inactive = dim.
+     */
+    private void updateModifierUI() {
+        if (btnSecShift != null) btnSecShift.setAlpha(shiftActive ? 1.0f : 0.55f);
+        if (btnSecCtrl  != null) btnSecCtrl.setAlpha(ctrlActive  ? 1.0f : 0.55f);
+        if (btnSecAlt   != null) btnSecAlt.setAlpha(altActive    ? 1.0f : 0.55f);
+    }
+
     private void breakAudioAndContinue() {
         if (!isListening || mRecorder == null) return;
         // Stop the current chunk. MSG_RECORDING_DONE will fire and route the

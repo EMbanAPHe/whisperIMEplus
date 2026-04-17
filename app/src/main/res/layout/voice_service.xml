@@ -448,6 +448,16 @@
 
             <!-- ══════════════════════════════════════════════════════════════
                  SECONDARY LAYOUT  (audio paused while visible)
+
+                 Heights: top row = weight 17 (same as one right-col row).
+                          bottom  = weight 83 (5 equal rows each ≈17%).
+                 Widths:  left/right cols = weight 1 (same as 1/3 of right col).
+                          centre D-pad   = weight 4.5.
+
+                 Top row: [KB (w=1.5)] [Shift] [Ctrl] [Alt] [Tab] [Esc (w=1.15)]
+                 Left col (top→bottom): [Home] [End*wider] [PgUp] [PgDn] [Menu↕]
+                 Right col:               [Cut ] [Copy*wider] [Paste] [Del ] [Enter]
+                 Centre: D-pad with drag (H=setSelection, V=DPAD_UP/DOWN) + tap zones.
                  ══════════════════════════════════════════════════════════════ -->
             <LinearLayout
                 android:id="@+id/layout_secondary"
@@ -456,152 +466,161 @@
                 android:orientation="vertical"
                 android:visibility="gone">
 
-                <!-- Top row (35%): KB + 4 quick-action buttons -->
+                <!-- Top row (weight 17 = same height as one Del-Unselected row) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="0.35"
+                    android:layout_weight="17"
                     android:orientation="horizontal">
 
-                    <!-- KB button (same position as primary) + Streaming label stacked below -->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="2"
-                        android:orientation="vertical">
-
-                        <ImageButton
-                            android:id="@+id/btnKeyboardSec"
-                            android:layout_width="match_parent"
-                            android:layout_height="0dp"
-                            android:layout_weight="1"
-                            android:layout_marginBottom="3dp"
-                            android:background="@drawable/rounded_button_tonal"
-                            android:src="@drawable/ic_keyboard_36dp"
-                            android:contentDescription="@string/exit_button"
-                            android:scaleType="centerInside"
-                            android:padding="4dp" />
-
-                        <TextView
-                            android:id="@+id/btnSecStreaming"
-                            android:layout_width="match_parent"
-                            android:layout_height="0dp"
-                            android:layout_weight="1"
-                            android:background="@drawable/rounded_button_tonal"
-                            android:text="Stream\n[ON]"
-                            android:gravity="center"
-                            android:textColor="#FFFFFF"
-                            android:textSize="10sp" />
-
-                    </LinearLayout>
-
-                    <Space android:layout_width="6dp" android:layout_height="match_parent" />
-
-                    <!-- Language display / toggle -->
-                    <TextView
-                        android:id="@+id/btnSecLang"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:layout_marginEnd="4dp"
-                        android:background="@drawable/rounded_button_tonal"
-                        android:text="Lang\n[auto]"
-                        android:gravity="center"
-                        android:textColor="#FFFFFF"
-                        android:textSize="10sp" />
-
-                    <!-- Settings shortcut -->
+                    <!-- KB button: same proportional width as in primary (weight 1.5) -->
                     <ImageButton
-                        android:id="@+id/btnSecSettings"
+                        android:id="@+id/btnKeyboardSec"
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:layout_marginEnd="4dp"
-                        android:background="@drawable/rounded_button_tonal"
-                        android:src="@drawable/ic_settings"
-                        android:contentDescription="@string/settings"
-                        android:scaleType="centerInside"
-                        android:padding="10dp" />
-
-                    <!-- Switch IME -->
-                    <ImageButton
-                        android:id="@+id/btnSecSwitchIme"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
+                        android:layout_weight="1.5"
                         android:background="@drawable/rounded_button_tonal"
                         android:src="@drawable/ic_keyboard_36dp"
                         android:contentDescription="@string/exit_button"
                         android:scaleType="centerInside"
-                        android:padding="10dp"
-                        android:alpha="0.7" />
+                        android:padding="6dp" />
+
+                    <Space android:layout_width="4dp" android:layout_height="match_parent" />
+
+                    <!-- Shift -->
+                    <TextView
+                        android:id="@+id/btnSecShift"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:text="&#x21E7;"
+                        android:gravity="center"
+                        android:textColor="#FFFFFF"
+                        android:textSize="18sp"
+                        android:alpha="0.55" />
+
+                    <!-- Ctrl -->
+                    <TextView
+                        android:id="@+id/btnSecCtrl"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:text="Ctrl"
+                        android:gravity="center"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:alpha="0.55" />
+
+                    <!-- Alt -->
+                    <TextView
+                        android:id="@+id/btnSecAlt"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:text="Alt"
+                        android:gravity="center"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:alpha="0.55" />
+
+                    <!-- Tab -->
+                    <TextView
+                        android:id="@+id/btnSecTab"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:text="&#x21B9;"
+                        android:gravity="center"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp" />
+
+                    <!-- Esc — slightly wider (top-right) to absorb remaining space -->
+                    <TextView
+                        android:id="@+id/btnSecEsc"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1.15"
+                        android:background="@drawable/rounded_button_tonal"
+                        android:text="Esc"
+                        android:gravity="center"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp" />
 
                 </LinearLayout>
 
-                <!-- Bottom section (65%): left col | centre | right col -->
+                <!-- Bottom section (weight 83): left col | D-pad | right col -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="0.65"
-                    android:layout_marginTop="5dp"
+                    android:layout_weight="83"
+                    android:layout_marginTop="4dp"
                     android:orientation="horizontal">
 
-                    <!-- Left column -->
+                    <!-- Left column (weight 1 = 1/3 of right-col width) -->
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
                         android:layout_weight="1"
                         android:orientation="vertical">
 
-                        <ImageButton
-                            android:id="@+id/btnSecUndo"
-                            android:layout_width="match_parent"
-                            android:layout_height="0dp"
-                            android:layout_weight="1"
-                            android:layout_marginBottom="4dp"
-                            android:background="@drawable/rounded_button_tonal"
-                            android:src="@drawable/ic_undo_36dp"
-                            android:contentDescription="@string/undo"
-                            android:scaleType="centerInside"
-                            android:padding="10dp" />
-
-                        <ImageButton
-                            android:id="@+id/btnSecRedo"
-                            android:layout_width="match_parent"
-                            android:layout_height="0dp"
-                            android:layout_weight="1"
-                            android:layout_marginBottom="4dp"
-                            android:background="@drawable/rounded_button_tonal"
-                            android:src="@drawable/ic_redo_36dp"
-                            android:contentDescription="@string/redo"
-                            android:scaleType="centerInside"
-                            android:padding="10dp" />
-
-                        <ImageButton
-                            android:id="@+id/btnSecSelAll"
-                            android:layout_width="match_parent"
-                            android:layout_height="0dp"
-                            android:layout_weight="1"
-                            android:layout_marginBottom="4dp"
-                            android:background="@drawable/rounded_button_tonal"
-                            android:src="@drawable/ic_select_all"
-                            android:contentDescription="@string/select_all"
-                            android:scaleType="centerInside"
-                            android:padding="10dp" />
-
                         <TextView
-                            android:id="@+id/btnSecClear"
+                            android:id="@+id/btnSecHome"
                             android:layout_width="match_parent"
                             android:layout_height="0dp"
                             android:layout_weight="1"
                             android:layout_marginBottom="4dp"
                             android:background="@drawable/rounded_button_tonal"
-                            android:text="@string/delete_unselected"
+                            android:text="Home"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
                             android:textSize="10sp" />
 
-                        <!-- Menu swap — bottom of left column -->
+                        <!-- 2nd button — absorbs any leftover height -->
+                        <TextView
+                            android:id="@+id/btnSecEnd"
+                            android:layout_width="match_parent"
+                            android:layout_height="0dp"
+                            android:layout_weight="1.2"
+                            android:layout_marginBottom="4dp"
+                            android:background="@drawable/rounded_button_tonal"
+                            android:text="End"
+                            android:gravity="center"
+                            android:textColor="#FFFFFF"
+                            android:textSize="10sp" />
+
+                        <TextView
+                            android:id="@+id/btnSecPgUp"
+                            android:layout_width="match_parent"
+                            android:layout_height="0dp"
+                            android:layout_weight="1"
+                            android:layout_marginBottom="4dp"
+                            android:background="@drawable/rounded_button_tonal"
+                            android:text="PgUp"
+                            android:gravity="center"
+                            android:textColor="#FFFFFF"
+                            android:textSize="10sp" />
+
+                        <TextView
+                            android:id="@+id/btnSecPgDn"
+                            android:layout_width="match_parent"
+                            android:layout_height="0dp"
+                            android:layout_weight="1"
+                            android:layout_marginBottom="4dp"
+                            android:background="@drawable/rounded_button_tonal"
+                            android:text="PgDn"
+                            android:gravity="center"
+                            android:textColor="#FFFFFF"
+                            android:textSize="10sp" />
+
+                        <!-- Menu swap — always at bottom of left column -->
                         <ImageButton
                             android:id="@+id/btnSecMenu"
                             android:layout_width="match_parent"
@@ -615,39 +634,30 @@
 
                     </LinearLayout>
 
-                    <Space android:layout_width="6dp" android:layout_height="match_parent" />
+                    <Space android:layout_width="4dp" android:layout_height="match_parent" />
 
-                    <!-- Centre: status / empty area -->
-                    <LinearLayout
+                    <!-- Centre — D-pad drag + tap zones -->
+                    <FrameLayout
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
                         android:layout_weight="4.5"
-                        android:orientation="vertical"
-                        android:gravity="center">
+                        android:background="@drawable/rounded_button_tonal">
 
-                        <TextView
-                            android:id="@+id/tvSecStatus"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="&#9646;&#9646; Paused"
-                            android:textColor="#88FFFFFF"
-                            android:textSize="15sp"
-                            android:gravity="center" />
+                        <!-- D-pad icon centred — user taps/drags around it -->
+                        <ImageView
+                            android:id="@+id/btnDpad"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:src="@drawable/ic_dpad"
+                            android:scaleType="fitCenter"
+                            android:contentDescription="D-pad"
+                            android:padding="16dp" />
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Extended Controls"
-                            android:textColor="#44FFFFFF"
-                            android:textSize="11sp"
-                            android:gravity="center"
-                            android:layout_marginTop="4dp" />
+                    </FrameLayout>
 
-                    </LinearLayout>
+                    <Space android:layout_width="4dp" android:layout_height="match_parent" />
 
-                    <Space android:layout_width="6dp" android:layout_height="match_parent" />
-
-                    <!-- Right column -->
+                    <!-- Right column (weight 1) -->
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
@@ -666,11 +676,12 @@
                             android:scaleType="centerInside"
                             android:padding="10dp" />
 
+                        <!-- 2nd button — absorbs any leftover height -->
                         <ImageButton
                             android:id="@+id/btnSecCopy"
                             android:layout_width="match_parent"
                             android:layout_height="0dp"
-                            android:layout_weight="1"
+                            android:layout_weight="1.2"
                             android:layout_marginBottom="4dp"
                             android:background="@drawable/rounded_button_tonal"
                             android:src="@drawable/ic_copy"
