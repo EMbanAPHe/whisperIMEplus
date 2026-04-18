@@ -498,7 +498,7 @@
                         android:text="Shift"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="13sp"
+                        android:textSize="15sp"
                         android:alpha="0.55" />
 
                     <!-- Ctrl -->
@@ -512,7 +512,7 @@
                         android:text="Ctrl"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="13sp"
+                        android:textSize="15sp"
                         android:alpha="0.55" />
 
                     <!-- Alt -->
@@ -526,7 +526,7 @@
                         android:text="Alt"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="13sp"
+                        android:textSize="15sp"
                         android:alpha="0.55" />
 
                     <!-- Tab -->
@@ -540,7 +540,7 @@
                         android:text="Tab"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="13sp" />
+                        android:textSize="15sp" />
 
                     <!-- Esc — slightly wider (top-right) to absorb remaining space -->
                     <TextView
@@ -552,7 +552,7 @@
                         android:text="Esc"
                         android:gravity="center"
                         android:textColor="#FFFFFF"
-                        android:textSize="13sp" />
+                        android:textSize="15sp" />
 
                 </LinearLayout>
 
@@ -581,20 +581,19 @@
                             android:text="Home"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="13sp" />
+                            android:textSize="15sp" />
 
-                        <!-- 2nd button — absorbs any leftover height -->
                         <TextView
                             android:id="@+id/btnSecEnd"
                             android:layout_width="match_parent"
                             android:layout_height="0dp"
-                            android:layout_weight="1.2"
+                            android:layout_weight="1"
                             android:layout_marginBottom="4dp"
                             android:background="@drawable/rounded_button_tonal"
                             android:text="End"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="13sp" />
+                            android:textSize="15sp" />
 
                         <TextView
                             android:id="@+id/btnSecPgUp"
@@ -606,7 +605,7 @@
                             android:text="PgUp"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="13sp" />
+                            android:textSize="15sp" />
 
                         <TextView
                             android:id="@+id/btnSecPgDn"
@@ -618,7 +617,7 @@
                             android:text="PgDn"
                             android:gravity="center"
                             android:textColor="#FFFFFF"
-                            android:textSize="13sp" />
+                            android:textSize="15sp" />
 
                         <!-- Menu swap — always at bottom of left column -->
                         <ImageButton
@@ -677,12 +676,11 @@
                             android:scaleType="centerInside"
                             android:padding="10dp" />
 
-                        <!-- 2nd button — absorbs any leftover height -->
                         <ImageButton
                             android:id="@+id/btnSecCopy"
                             android:layout_width="match_parent"
                             android:layout_height="0dp"
-                            android:layout_weight="1.2"
+                            android:layout_weight="1"
                             android:layout_marginBottom="4dp"
                             android:background="@drawable/rounded_button_tonal"
                             android:src="@drawable/ic_copy"

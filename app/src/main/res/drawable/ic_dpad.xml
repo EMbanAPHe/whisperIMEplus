@@ -1,57 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    D-pad cross: 4 separate rounded-rectangle arms with a clear gap at the centre.
-    Viewport 24×24.  Arms are 7 units wide (8.5–15.5 on the cross-axis).
-    Each arm stops at coordinate 9.5 / starts at 14.5, leaving a 5-unit gap.
-    Outer corners are rounded (r=1.5); inner corners are square (gap creates the separation).
-    Colour: #77FFFFFF — noticeably dimmer than full white.
+    D-pad: four filled triangular arrows (chevron/play-button style, like ">")
+    pointing outward near the edges. Clear centre gap. Viewport 24x24.
+    Colour: #88FFFFFF (soft white, not glaring).
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="36dp" android:height="36dp"
     android:viewportWidth="24" android:viewportHeight="24">
 
-    <!-- Up arm: wide axis 8.5–15.5, tall axis 1.5–9.5 -->
+    <!-- Up ▲: tip at y=2, base at y=8, base width 10, centred at x=12 -->
     <path android:fillColor="#88FFFFFF"
-          android:pathData="
-M10,1.5
-Q8.5,1.5 8.5,3
-L8.5,9.5
-L15.5,9.5
-L15.5,3
-Q15.5,1.5 14,1.5
-Z"/>
+          android:pathData="M12,2 L7,8 L17,8 Z"/>
 
-    <!-- Down arm: wide axis 8.5–15.5, tall axis 14.5–22.5 -->
+    <!-- Down ▼: tip at y=22, base at y=16, base width 10, centred at x=12 -->
     <path android:fillColor="#88FFFFFF"
-          android:pathData="
-M8.5,14.5
-L8.5,21
-Q8.5,22.5 10,22.5
-L14,22.5
-Q15.5,22.5 15.5,21
-L15.5,14.5
-Z"/>
+          android:pathData="M12,22 L7,16 L17,16 Z"/>
 
-    <!-- Left arm: wide axis 1.5–9.5, tall axis 8.5–15.5 -->
+    <!-- Left ◀: tip at x=2, base at x=8, base height 10, centred at y=12 -->
     <path android:fillColor="#88FFFFFF"
-          android:pathData="
-M1.5,10
-Q1.5,8.5 3,8.5
-L9.5,8.5
-L9.5,15.5
-L3,15.5
-Q1.5,15.5 1.5,14
-Z"/>
+          android:pathData="M2,12 L8,7 L8,17 Z"/>
 
-    <!-- Right arm: wide axis 14.5–22.5, tall axis 8.5–15.5 -->
+    <!-- Right ▶: tip at x=22, base at x=16, base height 10, centred at y=12 -->
     <path android:fillColor="#88FFFFFF"
-          android:pathData="
-M14.5,8.5
-L21,8.5
-Q22.5,8.5 22.5,10
-L22.5,14
-Q22.5,15.5 21,15.5
-L14.5,15.5
-Z"/>
+          android:pathData="M22,12 L16,7 L16,17 Z"/>
 
 </vector>
