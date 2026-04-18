@@ -466,11 +466,11 @@
                 android:orientation="vertical"
                 android:visibility="gone">
 
-                <!-- Top row (weight 35 = matches primary toolbar 35% height) -->
+                <!-- Top row: height matches keyboard button in primary (17.5% of total) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="35"
+                    android:layout_weight="17"
                     android:orientation="horizontal">
 
                     <!-- KB button: same proportional width as in primary (weight 1.5) -->
@@ -556,11 +556,11 @@
 
                 </LinearLayout>
 
-                <!-- Bottom section (weight 65 = matches primary mic area 65% height) -->
+                <!-- Bottom section: remaining height (83%) for 5 equal button rows -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="65"
+                    android:layout_weight="83"
                     android:layout_marginTop="5dp"
                     android:orientation="horizontal">
 

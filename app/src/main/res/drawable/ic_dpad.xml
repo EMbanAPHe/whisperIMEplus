@@ -1,39 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    D-pad cross: 4 rounded-outer-corner arms with chamfered (45°) inner corners.
-    Viewport 24×24. Arm half-width = 3.5 (arms from 8.5 to 15.5).
-    Outer edge = 1.5. Chamfer = 2.  Outer corner radius ≈ 1.5.
+    D-pad cross: 4 separate rounded-rectangle arms with a clear gap at the centre.
+    Viewport 24×24.  Arms are 7 units wide (8.5–15.5 on the cross-axis).
+    Each arm stops at coordinate 9.5 / starts at 14.5, leaving a 5-unit gap.
+    Outer corners are rounded (r=1.5); inner corners are square (gap creates the separation).
+    Colour: #77FFFFFF — noticeably dimmer than full white.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="36dp" android:height="36dp"
     android:viewportWidth="24" android:viewportHeight="24">
 
-    <path android:fillColor="#CCFFFFFF"
+    <!-- Up arm: wide axis 8.5–15.5, tall axis 1.5–9.5 -->
+    <path android:fillColor="#88FFFFFF"
           android:pathData="
-M 8.5,3
-Q 8.5,1.5 10,1.5
-L 14,1.5
-Q 15.5,1.5 15.5,3
-L 15.5,6.5
-L 17.5,8.5
-L 21,8.5
-Q 22.5,8.5 22.5,10
-L 22.5,14
-Q 22.5,15.5 21,15.5
-L 17.5,15.5
-L 15.5,17.5
-L 15.5,21
-Q 15.5,22.5 14,22.5
-L 10,22.5
-Q 8.5,22.5 8.5,21
-L 8.5,17.5
-L 6.5,15.5
-L 3,15.5
-Q 1.5,15.5 1.5,14
-L 1.5,10
-Q 1.5,8.5 3,8.5
-L 6.5,8.5
-L 8.5,6.5
+M10,1.5
+Q8.5,1.5 8.5,3
+L8.5,9.5
+L15.5,9.5
+L15.5,3
+Q15.5,1.5 14,1.5
+Z"/>
+
+    <!-- Down arm: wide axis 8.5–15.5, tall axis 14.5–22.5 -->
+    <path android:fillColor="#88FFFFFF"
+          android:pathData="
+M8.5,14.5
+L8.5,21
+Q8.5,22.5 10,22.5
+L14,22.5
+Q15.5,22.5 15.5,21
+L15.5,14.5
+Z"/>
+
+    <!-- Left arm: wide axis 1.5–9.5, tall axis 8.5–15.5 -->
+    <path android:fillColor="#88FFFFFF"
+          android:pathData="
+M1.5,10
+Q1.5,8.5 3,8.5
+L9.5,8.5
+L9.5,15.5
+L3,15.5
+Q1.5,15.5 1.5,14
+Z"/>
+
+    <!-- Right arm: wide axis 14.5–22.5, tall axis 8.5–15.5 -->
+    <path android:fillColor="#88FFFFFF"
+          android:pathData="
+M14.5,8.5
+L21,8.5
+Q22.5,8.5 22.5,10
+L22.5,14
+Q22.5,15.5 21,15.5
+L14.5,15.5
 Z"/>
 
 </vector>
