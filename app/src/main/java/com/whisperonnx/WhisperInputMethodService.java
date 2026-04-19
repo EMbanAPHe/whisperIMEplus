@@ -1750,6 +1750,14 @@ public class WhisperInputMethodService extends InputMethodService {
      * If the cursor is on the only line, deletes all text on that line.
      * Triggered by long-pressing the "Delete Unselected" button.
      */
+    /**
+     * Delete the entire line the cursor currently sits on.
+     * Uses getExtractedText() to locate the line boundaries in the full text,
+     * then removes from the start of that line to the start of the next line
+     * (i.e., including the trailing newline so the line count decreases by 1).
+     * If the cursor is on the only line, deletes all text on that line.
+     * Triggered by long-pressing the "Delete Unselected" button.
+     */
     private void deleteCurrentLine() {
         android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
@@ -1760,32 +1768,25 @@ public class WhisperInputMethodService extends InputMethodService {
         String text = et.text.toString();
         int cursorPos = et.selectionStart;
 
-        // Find start of current line (scan backwards to previous 
- or start)
+        // Find start of current line (scan backwards to previous \n or start)
         int lineStart = cursorPos;
-        while (lineStart > 0 && text.charAt(lineStart - 1) != '
-') lineStart--;
+        while (lineStart > 0 && text.charAt(lineStart - 1) != '\n') lineStart--;
 
-        // Find end of current line (scan forwards to next 
- or end)
+        // Find end of current line (scan forwards to next \n or end)
         int lineEnd = cursorPos;
-        while (lineEnd < text.length() && text.charAt(lineEnd) != '
-') lineEnd++;
+        while (lineEnd < text.length() && text.charAt(lineEnd) != '\n') lineEnd++;
 
-        // Include the trailing 
- if present (removes whole line including break)
-        if (lineEnd < text.length() && text.charAt(lineEnd) == '
-') lineEnd++;
+        // Include the trailing \n if present (removes whole line including break)
+        if (lineEnd < text.length() && text.charAt(lineEnd) == '\n') lineEnd++;
 
-        // Move cursor to start of line, then delete (before=0, after=lineEnd-lineStart)
-        int charsAfterCursor = lineEnd - cursorPos;
+        // Move cursor to line start, then delete forwards to lineEnd
+        int charsAfterCursor  = lineEnd - cursorPos;
         int charsBeforeCursor = cursorPos - lineStart;
-
         ic.setSelection(lineStart, lineStart);
         ic.deleteSurroundingText(0, charsAfterCursor + charsBeforeCursor);
     }
 
-    private void undoLastTranscription() {
+        private void undoLastTranscription() {
         if (transcriptionHistory.isEmpty()) {
             // Nothing to undo — brief status flash
             if (tvStatus != null) {
