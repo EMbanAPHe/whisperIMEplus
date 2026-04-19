@@ -300,11 +300,19 @@ public class Recorder {
 
             // ── Per-session state ──────────────────────────────────────────────
             ByteArrayOutputStream segment = new ByteArrayOutputStream(96 * 1024);
-            boolean inSpeech    = false;
-            boolean hadSpeech   = false;
-            int     silentFrames = 0;
-            float   adaptFloor  = 0f;
-            byte[]  tailOverlap = null;
+            boolean inSpeech      = false;
+            boolean hadSpeech     = false;
+            int     silentFrames  = 0;
+            // Noise floor estimate — bootstrap from first BOOTSTRAP_FRAMES of audio
+            // so the adaptive gate has an immediate estimate rather than starting at 0.
+            // Updated only during silent frames using slow EMA (alpha=0.05).
+            float   adaptFloor    = 0f;
+            // Noise variance estimate — speech has much higher intra-frame variance
+            // than stationary background noise. Used as a secondary discriminator.
+            float   adaptVariance = 0f;
+            int     bootstrapFrames = 0;
+            final int BOOTSTRAP_FRAMES = 20; // ~600ms of silence to seed the estimates
+            byte[]  tailOverlap   = null;
 
             // Generation tracking — detects rapid stop→start sequences
             int loopGen = 0;  // gen the read loop is currently committed to (0 = idle)
@@ -358,11 +366,35 @@ public class Recorder {
 
                     // ── VAD + segmentation ─────────────────────────────────────
                     if (useVAD) {
-                        int   threshold = (int) Math.max(vadAmplitudeThreshold, adaptFloor * 1.5f);
+                        // ── Speech gate: SNR + variance + WebRTC VAD ────────────────
+                        // Threshold = max(user floor, adaptive floor × snr_factor).
+                        // snr_factor: 1.5 when adaptFloor has converged, ensuring the
+                        // gate tracks the environment rather than using an absolute level.
+                        // When adaptFloor is still at 0 (no silence yet), fall back to
+                        // vadAmplitudeThreshold to avoid passing everything through.
+                        float snrFactor = 1.5f;
+                        int   threshold;
+                        if (adaptFloor > 50f) {
+                            // Noise floor converged — use SNR gate; ignore fixed threshold
+                            // unless it is explicitly set higher (user override).
+                            threshold = (int) Math.max(vadAmplitudeThreshold,
+                                    adaptFloor * snrFactor);
+                        } else {
+                            // No estimate yet — use fixed threshold as sole gate.
+                            threshold = vadAmplitudeThreshold;
+                        }
                         boolean suppressed = !inSpeech
                                 && android.os.SystemClock.uptimeMillis() < vadSuppressedUntil;
+                        float frameRms = rmsOf(frame, n);
+                        float frameVar = varianceOf(frame, n, frameRms);
+                        // Primary gate: amplitude SNR.
+                        // Secondary gate: variance SNR — catches soft consonants whose
+                        // RMS is below the amplitude threshold but whose spectral structure
+                        // is speech-like (high variance relative to noise floor).
+                        boolean highVariance = adaptVariance > 10f
+                                && frameVar > adaptVariance * 3.5f;
                         boolean loud    = inSpeech
-                                || (!suppressed && rmsOf(frame, n) >= threshold);
+                                || (!suppressed && (frameRms >= threshold || highVariance));
                         boolean isSpeech = loud && vad.isSpeech(frame);
 
                         if (isSpeech) {
@@ -397,8 +429,20 @@ public class Recorder {
                                 silentFrames = 0;
                             } else {
                                 silentFrames++;
-                                // Adaptive noise floor (silence only)
-                                adaptFloor = adaptFloor * 0.95f + rmsOf(frame, n) * 0.05f;
+                                float frameRms = rmsOf(frame, n);
+                                float frameVar = varianceOf(frame, n, frameRms);
+                                if (bootstrapFrames < BOOTSTRAP_FRAMES) {
+                                    // Fast bootstrap: use first N silent frames to get
+                                    // an immediate noise estimate before EMA converges.
+                                    bootstrapFrames++;
+                                    float alpha = 1f / bootstrapFrames;
+                                    adaptFloor    = adaptFloor    * (1f - alpha) + frameRms * alpha;
+                                    adaptVariance = adaptVariance * (1f - alpha) + frameVar * alpha;
+                                } else {
+                                    // Slow EMA: track gradual environment changes.
+                                    adaptFloor    = adaptFloor    * 0.97f + frameRms * 0.03f;
+                                    adaptVariance = adaptVariance * 0.97f + frameVar * 0.03f;
+                                }
                                 if (!hadSpeech && silentFrames >= TIMEOUT_FRAMES) {
                                     sendUpdate(MSG_VAD_TIMEOUT);
                                     silentFrames = 0;
@@ -498,5 +542,24 @@ public class Recorder {
             sum += (long) v * v;
         }
         return (int) Math.sqrt((double) sum / s);
+    }
+
+    /**
+     * Compute the variance of sample amplitudes within a PCM frame.
+     * Speech frames have high variance (rich harmonic content); stationary
+     * background noise has low variance (spectrally uniform). Passing the
+     * already-computed RMS avoids redundant work.
+     */
+    private static float varianceOf(byte[] pcm, int len, float mean) {
+        if (len < 2) return 0f;
+        double sumSq = 0;
+        int s = 0;
+        for (int i = 0; i < len - 1; i += 2) {
+            short v = (short) ((pcm[i + 1] << 8) | (pcm[i] & 0xFF));
+            float diff = Math.abs(v) - mean;
+            sumSq += diff * diff;
+            s++;
+        }
+        return s > 0 ? (float)(sumSq / s) : 0f;
     }
 }

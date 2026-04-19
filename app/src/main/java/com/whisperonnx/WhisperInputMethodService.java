@@ -674,6 +674,12 @@ public class WhisperInputMethodService extends InputMethodService {
             getCurrentInputConnection()
                     .deleteSurroundingText(before.length(), after.length());
         });
+        // Long-press Delete Unselected: delete the line the cursor is on.
+        btnClear.setOnLongClickListener(v -> {
+            tap(v);
+            deleteCurrentLine();
+            return true;
+        });
 
         // ── Cut | Copy | Paste ────────────────────────────────────────────────
         btnCut.setOnClickListener(v   -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_X, false); });
@@ -1275,12 +1281,27 @@ public class WhisperInputMethodService extends InputMethodService {
                 }
 
             } else if (message.equals(Recorder.MSG_RECORDING_ERROR)) {
+                // AudioRecord error — hardware issue, GC pause, or audio focus loss.
+                // If we were in a continuous session, auto-retry once after a short
+                // delay so a transient error doesn't kill an active dictation session.
                 isRecording    = false;
+                final boolean wasListening  = isListening;
+                final boolean wasContinuous = continuousMode;
                 isListening    = false;
                 continuousMode = false;
                 if (prefHapticRecording) HapticFeedback.vibrate(this);
                 handler.post(() -> {
                     if (sessionGen != sid) return;
+                    if (wasListening && wasContinuous && !cancelRequested) {
+                        // Transient error during active continuous session — retry.
+                        Log.d(TAG, "AudioRecord error during continuous session — retrying");
+                        handler.postDelayed(() -> {
+                            if (sessionGen == sid && !cancelRequested && !isListening) {
+                                startRecordingSession(true);
+                            }
+                        }, 500); // 500ms delay gives audio system time to recover
+                        return;
+                    }
                     setMicState(MicState.IDLE);
                     setCancelEnabled(false);
                     if (tvStatus != null) {
@@ -1721,6 +1742,49 @@ public class WhisperInputMethodService extends InputMethodService {
      * touching anything the user typed manually or from a different session.
      * Called by long-pressing the Undo button.
      */
+    /**
+     * Delete the entire line the cursor currently sits on.
+     * Uses getExtractedText() to locate the line boundaries in the full text,
+     * then removes from the start of that line to the start of the next line
+     * (i.e., including the trailing newline so the line count decreases by 1).
+     * If the cursor is on the only line, deletes all text on that line.
+     * Triggered by long-pressing the "Delete Unselected" button.
+     */
+    private void deleteCurrentLine() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        android.view.inputmethod.ExtractedText et =
+                ic.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+        if (et == null || et.text == null) return;
+
+        String text = et.text.toString();
+        int cursorPos = et.selectionStart;
+
+        // Find start of current line (scan backwards to previous 
+ or start)
+        int lineStart = cursorPos;
+        while (lineStart > 0 && text.charAt(lineStart - 1) != '
+') lineStart--;
+
+        // Find end of current line (scan forwards to next 
+ or end)
+        int lineEnd = cursorPos;
+        while (lineEnd < text.length() && text.charAt(lineEnd) != '
+') lineEnd++;
+
+        // Include the trailing 
+ if present (removes whole line including break)
+        if (lineEnd < text.length() && text.charAt(lineEnd) == '
+') lineEnd++;
+
+        // Move cursor to start of line, then delete (before=0, after=lineEnd-lineStart)
+        int charsAfterCursor = lineEnd - cursorPos;
+        int charsBeforeCursor = cursorPos - lineStart;
+
+        ic.setSelection(lineStart, lineStart);
+        ic.deleteSurroundingText(0, charsAfterCursor + charsBeforeCursor);
+    }
+
     private void undoLastTranscription() {
         if (transcriptionHistory.isEmpty()) {
             // Nothing to undo — brief status flash

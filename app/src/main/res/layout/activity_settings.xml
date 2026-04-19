@@ -10,7 +10,7 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:padding="10dp">
 
             <!-- ═══ IME Language ═══ -->
             <TextView
@@ -103,8 +103,8 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:layout_marginBottom="6dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="2dp"
                 android:textSize="20dp"
                 android:text="@string/settings_listening_mode" />
 
@@ -115,7 +115,7 @@
                 android:layout_marginBottom="4dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:minHeight="52dp">
+                android:minHeight="40dp">
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -145,8 +145,8 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:layout_marginBottom="6dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="2dp"
                 android:textSize="20dp"
                 android:text="@string/settings_voice_keyboard" />
 
@@ -157,7 +157,7 @@
                 android:layout_marginBottom="4dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:minHeight="52dp">
+                android:minHeight="40dp">
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -190,7 +190,7 @@
                 android:layout_marginBottom="4dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:minHeight="52dp">
+                android:minHeight="40dp">
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -223,7 +223,7 @@
                 android:layout_marginBottom="12dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:minHeight="52dp">
+                android:minHeight="40dp">
                 <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -384,7 +384,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:layout_marginBottom="4dp"
                 android:textSize="20dp"
                 android:text="@string/settings_vad_section" />
@@ -393,7 +393,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="6dp"
                 android:textSize="16sp"
                 android:textColor="@color/colorAccent"
                 android:text="Microphone Sensitivity Threshold" />
@@ -412,8 +412,8 @@
                 android:layout_height="8sp"
                 android:gravity="center_vertical"
                 android:valueFrom="0"
-                android:valueTo="3000"
-                android:stepSize="50" />
+                android:valueTo="1000"
+                android:stepSize="25" />
 
         </LinearLayout>
     </ScrollView>

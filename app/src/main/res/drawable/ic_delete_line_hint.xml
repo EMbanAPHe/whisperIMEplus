@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="12dp" android:height="12dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Horizontal text line -->
+    <path android:fillColor="#AAFFFFFF"
+          android:pathData="M3,10h18v2.5H3z"/>
+    <!-- Small X at end — delete line indicator -->
+    <path android:fillColor="#AAFFFFFF"
+          android:pathData="M17,4l-2,2 1.5,1.5L15,9l1.5,1.5 1.5-1.5 1.5,1.5L21,9l-1.5,-1.5L21,6l-1.5,-1.5L18,6z"/>
+</vector>
