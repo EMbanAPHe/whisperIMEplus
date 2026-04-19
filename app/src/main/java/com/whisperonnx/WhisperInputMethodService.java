@@ -475,6 +475,23 @@ public class WhisperInputMethodService extends InputMethodService {
         if (punctuationPopup != null) { punctuationPopup.dismiss(); punctuationPopup = null; punctuationVisible = false; }
         if (keyboardPopup    != null) { keyboardPopup.dismiss();    keyboardPopup    = null; }
 
+        // Reset secondary layout state so keyboard always reopens on primary.
+        // isSecondaryLayout is a sticky field — if left true when the keyboard hides,
+        // the view (which Android may reuse without calling onCreateInputView again)
+        // would reopen showing the secondary panel with the mic hidden, while
+        // startRecordingSession runs invisibly in the background.
+        if (isSecondaryLayout) {
+            isSecondaryLayout = false;
+            wasListeningBeforeSecondary = false;
+            if (layoutPrimary   != null) layoutPrimary.setVisibility(View.VISIBLE);
+            if (layoutSecondary != null) layoutSecondary.setVisibility(View.GONE);
+        }
+        // Clear modifier key state — modifiers must not persist across keyboard sessions.
+        shiftActive = false;
+        ctrlActive  = false;
+        altActive   = false;
+        updateModifierUI();
+
         // Synchronously reset the visual state NOW, while widget references are
         // still valid. Android does NOT always call onCreateInputView() when the
         // keyboard is reshown — it reuses the existing view. If we null the widget
@@ -724,15 +741,25 @@ public class WhisperInputMethodService extends InputMethodService {
         if (btnScCpy != null) btnScCpy.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_C, false); });
         if (btnScPst != null) btnScPst.setOnClickListener(v ->  { tap(v); sendCtrlKey(KeyEvent.KEYCODE_V, false); });
         if (btnScDel != null) btnScDel.setOnTouchListener((v, ev) -> {
-            // Backspace with long-press repeat (reuses doDelete helper)
+            // Backspace with long-press repeat. The Runnable is self-rescheduling
+            // (run() posts itself) and stored in v.setTag() for cancellation.
+            // We cancel any existing tag FIRST so a rapid double-DOWN doesn't leak
+            // the previous runnable — removeCallbacks cancels all pending posts of that
+            // specific Runnable object, including the self-scheduled future ones.
             switch (ev.getAction()) {
                 case android.view.MotionEvent.ACTION_DOWN:
+                    // Cancel any previously running repeat (edge case: rapid taps)
+                    Object existing = v.getTag();
+                    if (existing instanceof Runnable) {
+                        handler.removeCallbacks((Runnable) existing);
+                        v.setTag(null);
+                    }
                     tap(v); doDelete();
-                    Runnable secDelFast = new Runnable() {
+                    Runnable secDelRepeat = new Runnable() {
                         @Override public void run() { doDelete(); handler.postDelayed(this, 50); }
                     };
-                    handler.postDelayed(secDelFast, 400);
-                    v.setTag(secDelFast);
+                    handler.postDelayed(secDelRepeat, 400);
+                    v.setTag(secDelRepeat);
                     break;
                 case android.view.MotionEvent.ACTION_UP:
                 case android.view.MotionEvent.ACTION_CANCEL:
@@ -1874,12 +1901,22 @@ public class WhisperInputMethodService extends InputMethodService {
             layoutSecondary.setVisibility(View.VISIBLE);
             updateSecondaryLabels();
         } else {
-            // Switching back to primary — restore audio if it was running
+            // Switching back to primary — restore audio if it was running.
+            // Reset modifier keys: they don't make sense to carry across layout switches.
+            shiftActive = false; ctrlActive = false; altActive = false;
+            updateModifierUI();
             layoutSecondary.setVisibility(View.GONE);
             layoutPrimary.setVisibility(View.VISIBLE);
             if (wasListeningBeforeSecondary && !isListening) {
-                suppressNextAutoStart = false;  // allow restart
-                startRecordingSession(prefAutoStop);
+                suppressNextAutoStart = false;
+                // Defer via handler.post so we're off the call stack and the
+                // recorder's worker thread has had a chance to process the stop
+                // signal from exitListeningMode before we call start().
+                handler.post(() -> {
+                    if (!isListening && !isSecondaryLayout) {
+                        startRecordingSession(prefAutoStop);
+                    }
+                });
             }
         }
     }
@@ -2047,6 +2084,16 @@ public class WhisperInputMethodService extends InputMethodService {
      * Must be called on the main thread after all widgets are bound.
      */
     private void restoreButtonState() {
+        // If the view was re-inflated (onCreateInputView called), the XML defaults
+        // layoutPrimary=VISIBLE and layoutSecondary=GONE. Since onFinishInputView
+        // always resets isSecondaryLayout=false before the view can be reused,
+        // this belt-and-suspenders guard ensures we never show a hidden primary panel.
+        if (!isSecondaryLayout) {
+            if (layoutPrimary   != null) layoutPrimary.setVisibility(View.VISIBLE);
+            if (layoutSecondary != null) layoutSecondary.setVisibility(View.GONE);
+        }
+        updateCapsIcon();
+        updateModifierUI();
         if (isListening) {
             setCancelEnabled(true);
             setMicState(isRecording ? MicState.RECORDING : MicState.LISTENING);
