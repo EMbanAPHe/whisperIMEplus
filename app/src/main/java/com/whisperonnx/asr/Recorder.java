@@ -429,8 +429,8 @@ public class Recorder {
                                 silentFrames = 0;
                             } else {
                                 silentFrames++;
-                                float frameRms = rmsOf(frame, n);
-                                float frameVar = varianceOf(frame, n, frameRms);
+                                frameRms = rmsOf(frame, n);
+                                frameVar = varianceOf(frame, n, frameRms);
                                 if (bootstrapFrames < BOOTSTRAP_FRAMES) {
                                     // Fast bootstrap: use first N silent frames to get
                                     // an immediate noise estimate before EMA converges.
