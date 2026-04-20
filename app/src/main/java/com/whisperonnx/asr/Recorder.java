@@ -105,6 +105,8 @@ public class Recorder {
     private volatile boolean  useVAD               = false;
     private volatile int      vadAmplitudeThreshold = 300;
     private volatile long     vadSuppressedUntil   = 0L;
+    /** When false, audio focus is not requested so background audio keeps playing. */
+    private volatile boolean  muteAudioOnRecord    = true;
     private VadWebRTC vad = null;  // created by initVad(), only read/closed by worker
 
     private final SharedPreferences sp;
@@ -117,6 +119,11 @@ public class Recorder {
         workerThread  = new Thread(this::recordLoop, "RecorderWorker");
         workerThread.setDaemon(true);
         workerThread.start();
+    }
+
+    /** Call when the preference changes. Thread-safe. */
+    public void setMuteAudioOnRecord(boolean mute) {
+        muteAudioOnRecord = mute;
     }
 
     public void setListener(RecorderListener listener) {
@@ -502,6 +509,7 @@ public class Recorder {
     }
 
     private void requestAudioFocus() {
+        if (!muteAudioOnRecord) return; // user prefers background audio to continue
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             AudioFocusRequest req = new AudioFocusRequest
                     .Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)

@@ -231,17 +231,35 @@
                         android:layout_marginBottom="4dp"
                         android:orientation="horizontal">
 
-                        <ImageButton
-                            android:id="@+id/btnSelectAll"
+                        <!-- Select All wrapped for hint overlay (long-press = select sentence) -->
+                        <FrameLayout
                             android:layout_width="0dp"
                             android:layout_height="match_parent"
                             android:layout_weight="1"
-                            android:layout_marginEnd="4dp"
-                            android:background="@drawable/rounded_button_tonal"
-                            android:src="@drawable/ic_select_all"
-                            android:contentDescription="@string/select_all"
-                            android:scaleType="centerInside"
-                            android:padding="14dp" />
+                            android:layout_marginEnd="4dp">
+
+                            <ImageButton
+                                android:id="@+id/btnSelectAll"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:background="@drawable/rounded_button_tonal"
+                                android:src="@drawable/ic_select_all"
+                                android:contentDescription="@string/select_all"
+                                android:scaleType="centerInside"
+                                android:padding="14dp" />
+
+                            <!-- Secondary hint: long-press = select current sentence -->
+                            <ImageView
+                                android:layout_width="13dp"
+                                android:layout_height="13dp"
+                                android:layout_gravity="top|end"
+                                android:layout_margin="3dp"
+                                android:src="@drawable/ic_select_sentence_hint"
+                                android:scaleType="fitCenter"
+                                android:importantForAccessibility="no"
+                                android:contentDescription="" />
+
+                        </FrameLayout>
 
                         <!-- Delete Unselected wrapped for secondary hint overlay (long-press = delete line) -->
                         <FrameLayout

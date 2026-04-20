@@ -46,6 +46,7 @@ public class SettingsActivity extends AppCompatActivity {
     public static final String KEY_HAPTIC_RECORDING   = "imeHapticRecording";
     public static final String KEY_RETURN_AFTER_IDLE  = "imeReturnAfterIdle";
     public static final String KEY_AUTO_CAPITALISE    = "imeAutoCapitalise";
+    public static final String KEY_MUTE_AUDIO         = "imeMuteAudio";
 
     private SharedPreferences sp = null;
     private Spinner spinnerLanguage;
@@ -144,6 +145,7 @@ public class SettingsActivity extends AppCompatActivity {
         wireSwitchCompat(R.id.switch_haptic_recording, KEY_HAPTIC_RECORDING, true);
         wireSwitchCompat(R.id.switch_return_after_idle, KEY_RETURN_AFTER_IDLE, false);
         wireSwitchCompat(R.id.switch_auto_capitalise, KEY_AUTO_CAPITALISE, true);
+        wireSwitchCompat(R.id.switch_mute_audio, KEY_MUTE_AUDIO, true);
 
         // ── Recognition-service language spinner (existing, unchanged) ──────────
         spinnerLanguage = findViewById(R.id.spnrLanguage);

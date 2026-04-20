@@ -656,6 +656,11 @@ public class WhisperInputMethodService extends InputMethodService {
             if (getCurrentInputConnection() != null)
                 sendCtrlKey(KeyEvent.KEYCODE_A, false);
         });
+        btnSelectAll.setOnLongClickListener(v -> {
+            tap(v);
+            selectCurrentSentence();
+            return true;
+        });
 
         // ── Delete Unselected ─────────────────────────────────────────────────
         // Keeps only the selected text; deletes everything else.
@@ -1181,23 +1186,7 @@ public class WhisperInputMethodService extends InputMethodService {
         // ── Send (IME action) ──────────────────────────────────────────────────
         btnSend.setOnClickListener(v -> {
             tap(v);
-            android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-            if (ic == null) return;
-            EditorInfo ei = getCurrentInputEditorInfo();
-            int actionId = ei != null ? ei.actionId : 0;
-            if (actionId != 0
-                    && actionId != EditorInfo.IME_ACTION_NONE
-                    && actionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
-                // App declared a specific action (Search, Done, Go, etc.) — use it.
-                ic.performEditorAction(actionId);
-            } else {
-                // No specific action declared (Signal, many chat apps).
-                // These apps handle KEYCODE_ENTER for send — performEditorAction()
-                // with any action code is ignored and causes the keyboard to hide.
-                long t = android.os.SystemClock.uptimeMillis();
-                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
-                ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
-            }
+            doSend();
         });
 
         // ── Enter with long-press repeat ───────────────────────────────────────
@@ -1457,19 +1446,7 @@ public class WhisperInputMethodService extends InputMethodService {
 
                 // Auto-send
                 if (prefAutoSend && getCurrentInputConnection() != null) {
-                    EditorInfo ei = getCurrentInputEditorInfo();
-                    int autoActionId = ei != null ? ei.actionId : 0;
-                    if (autoActionId != 0
-                            && autoActionId != EditorInfo.IME_ACTION_NONE
-                            && autoActionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
-                        getCurrentInputConnection().performEditorAction(autoActionId);
-                    } else {
-                        long t = android.os.SystemClock.uptimeMillis();
-                        getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
-                        getCurrentInputConnection().sendKeyEvent(
-                                new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
-                    }
+                    doSend();
                 }
 
                 // Auto-switch (single-take sessions only)
@@ -1713,6 +1690,113 @@ public class WhisperInputMethodService extends InputMethodService {
                 if (getCurrentInputConnection() != null)
                     getCurrentInputConnection().commitText(ch, 1);
             });
+        }
+    }
+
+    /**
+     * Send / submit the current input.
+     *
+     * Priority order (matches what Transcribro and FlorisBoard do):
+     *   1. If the editor declared a real action (Search, Done, Go, Next, Send) use it.
+     *   2. Otherwise send IME_ACTION_SEND via performEditorAction — many chat apps
+     *      (WhatsApp, Telegram, Discord) respond to this even when they don't declare
+     *      an actionId, because they register an IME action listener server-side.
+     *   3. As a final fallback send KEYCODE_ENTER — Signal and some custom editors
+     *      only listen for hardware-key events, not performEditorAction.
+     *
+     * Sending ENTER unconditionally (the old approach) was unreliable because some
+     * apps treat ENTER as "new line" rather than "send" unless the action is explicit.
+     */
+    private void doSend() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        EditorInfo ei = getCurrentInputEditorInfo();
+        int actionId = (ei != null) ? ei.actionId : 0;
+
+        if (actionId != 0
+                && actionId != EditorInfo.IME_ACTION_NONE
+                && actionId != EditorInfo.IME_ACTION_UNSPECIFIED) {
+            // Editor declared a specific named action — use it exactly.
+            ic.performEditorAction(actionId);
+            return;
+        }
+
+        // No named action declared. Decide strategy from imeOptions flags.
+        //
+        // If the field sets FLAG_NO_ENTER_ACTION it means pressing Enter inserts
+        // a newline — the app wants multi-line input. Use IME_ACTION_SEND to submit.
+        //
+        // Otherwise use KEYCODE_ENTER. Apps like Signal only listen for the physical
+        // key event. performEditorAction(IME_ACTION_SEND) on these causes the keyboard
+        // to hide without sending, or is silently ignored.
+        //
+        // This is the same heuristic that Gboard uses for the "Send" key.
+        int imeOpts = (ei != null) ? ei.imeOptions : 0;
+        boolean noEnterAction = (imeOpts & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0;
+
+        if (noEnterAction) {
+            // Multi-line field — Enter = newline, so use the action API to submit.
+            ic.performEditorAction(EditorInfo.IME_ACTION_SEND);
+        } else {
+            // Single-line or unspecified — send a real Enter key event.
+            // This works in Signal, WhatsApp, Telegram, and most messaging apps.
+            long t = android.os.SystemClock.uptimeMillis();
+            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0));
+            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ENTER, 0));
+        }
+    }
+
+    /**
+     * Select the sentence the cursor currently sits in.
+     * Scans backwards for a sentence-ending punctuation (.!?) or start-of-text,
+     * then forwards for the next sentence-ending punctuation or end-of-text.
+     * Triggered by long-pressing the Select All button.
+     */
+    private void selectCurrentSentence() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        android.view.inputmethod.ExtractedText et =
+                ic.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+        if (et == null || et.text == null) return;
+
+        String text = et.text.toString();
+        int pos = et.selectionStart;
+
+        // Scan backwards to sentence start.
+        // A sentence starts after '.', '!', '?' (with optional trailing space/newline).
+        int sentStart = 0;
+        for (int i = pos - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '.' || c == '!' || c == '?') {
+                // Found end of previous sentence — sentence starts after the whitespace
+                int j = i + 1;
+                while (j < pos && (text.charAt(j) == ' ' || text.charAt(j) == '\n')) j++;
+                sentStart = j;
+                break;
+            }
+            if (c == '\n') {
+                // Paragraph break — treat as sentence boundary
+                sentStart = i + 1;
+                break;
+            }
+        }
+
+        // Scan forwards to sentence end (include the punctuation character).
+        int sentEnd = text.length();
+        for (int i = pos; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '.' || c == '!' || c == '?') {
+                sentEnd = i + 1;
+                break;
+            }
+            if (c == '\n') {
+                sentEnd = i;
+                break;
+            }
+        }
+
+        if (sentStart < sentEnd) {
+            ic.setSelection(sentStart, sentEnd);
         }
     }
 
@@ -2307,6 +2391,9 @@ public class WhisperInputMethodService extends InputMethodService {
         prefAutoSend        = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
         prefHapticRecording  = sp.getBoolean(SettingsActivity.KEY_HAPTIC_RECORDING, true);
         prefAutoCapitalise   = sp.getBoolean(SettingsActivity.KEY_AUTO_CAPITALISE,   true);
+        // Audio focus preference — propagate immediately to Recorder
+        boolean muteAudio = sp.getBoolean("imeMuteAudio", true);
+        if (mRecorder != null) mRecorder.setMuteAudioOnRecord(muteAudio);
     }
 
     /** Writes preference defaults once on first install. Called only from onCreate(). */

@@ -307,6 +307,38 @@
                     android:text="Auto-capitalise First Word of Each Result" />
             </LinearLayout>
 
+            <!-- Audio focus — allow background music to keep playing while recording -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:orientation="horizontal">
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switch_mute_audio"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:checked="true" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="16sp"
+                        android:text="Mute Background Audio While Recording" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="13sp"
+                        android:textColor="@color/colorAccent"
+                        android:text="When off, music and podcasts continue playing during dictation" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- ═══ Voice Input (Recognition Service) ═══ -->
             <TextView
                 android:layout_width="match_parent"
