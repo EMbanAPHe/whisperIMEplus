@@ -1,31 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- D-pad: 4 bold > chevron arrows pointing outward. No fill, just strokes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="36dp" android:height="36dp"
     android:viewportWidth="24" android:viewportHeight="24">
-
-    <!-- Up: > rotated 270° (pointing up), tip at top -->
-    <path android:strokeColor="#99FFFFFF" android:strokeWidth="3.5"
-          android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:fillColor="@android:color/transparent"
-          android:pathData="M7,10 L12,5 L17,10"/>
-
-    <!-- Down: > rotated 90° (pointing down) -->
-    <path android:strokeColor="#99FFFFFF" android:strokeWidth="3.5"
-          android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:fillColor="@android:color/transparent"
-          android:pathData="M7,14 L12,19 L17,14"/>
-
-    <!-- Left: < (pointing left) -->
-    <path android:strokeColor="#99FFFFFF" android:strokeWidth="3.5"
-          android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:fillColor="@android:color/transparent"
-          android:pathData="M10,7 L5,12 L10,17"/>
-
-    <!-- Right: > (pointing right) -->
-    <path android:strokeColor="#99FFFFFF" android:strokeWidth="3.5"
-          android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:fillColor="@android:color/transparent"
-          android:pathData="M14,7 L19,12 L14,17"/>
-
+    <!-- Up chevron: filled triangle pointing up, top-center -->
+    <path android:fillColor="#99FFFFFF"
+          android:pathData="M12,3 L7.5,9 L10.5,9 L10.5,11 L13.5,11 L13.5,9 L16.5,9 Z"/>
+    <!-- Down chevron: filled triangle pointing down, bottom-center -->
+    <path android:fillColor="#99FFFFFF"
+          android:pathData="M12,21 L7.5,15 L10.5,15 L10.5,13 L13.5,13 L13.5,15 L16.5,15 Z"/>
+    <!-- Left chevron: filled triangle pointing left, left-center -->
+    <path android:fillColor="#99FFFFFF"
+          android:pathData="M3,12 L9,7.5 L9,10.5 L11,10.5 L11,13.5 L9,13.5 L9,16.5 Z"/>
+    <!-- Right chevron: filled triangle pointing right, right-center -->
+    <path android:fillColor="#99FFFFFF"
+          android:pathData="M21,12 L15,7.5 L15,10.5 L13,10.5 L13,13.5 L15,13.5 L15,16.5 Z"/>
 </vector>

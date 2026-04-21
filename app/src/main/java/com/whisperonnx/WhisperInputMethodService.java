@@ -1437,13 +1437,20 @@ public class WhisperInputMethodService extends InputMethodService {
                 if (!trimmed.isEmpty() && !isNonSpeechAnnotation(trimmed)
                         && getCurrentInputConnection() != null) {
                     String committed = trimmed + " ";
-                    getCurrentInputConnection().commitText(committed, 1);
-                    // Record for word-level undo (long-press Undo button)
-                    handler.post(() -> {
-                        if (transcriptionHistory.size() >= MAX_UNDO_HISTORY)
-                            transcriptionHistory.pollFirst();
-                        transcriptionHistory.addLast(committed);
-                    });
+                    try {
+                        getCurrentInputConnection().commitText(committed, 1);
+                        // Record for word-level undo (long-press Undo button)
+                        handler.post(() -> {
+                            if (transcriptionHistory.size() >= MAX_UNDO_HISTORY)
+                                transcriptionHistory.pollFirst();
+                            transcriptionHistory.addLast(committed);
+                        });
+                    } catch (Exception deadObj) {
+                        // DEAD_OBJECT: the IME window was destroyed while Whisper was
+                        // still running inference. Safe to discard this result — the
+                        // keyboard will reinitialise on next open.
+                        Log.w(TAG, "commitText on dead window (app switch during inference): " + deadObj.getMessage());
+                    }
                 }
 
                 // Auto-send
@@ -1466,6 +1473,12 @@ public class WhisperInputMethodService extends InputMethodService {
 
                 // Post-result state update on main thread
                 handler.post(() -> {
+                    // Guard: IME window may have been destroyed during inference (app switch).
+                    if (!isInputViewShown()) {
+                        audioQueue.clear();
+                        Log.d(TAG, "Discarding result — input view no longer shown");
+                        return;
+                    }
                     if (activeWhisperSessionId != sid || cancelRequested) {
                         audioQueue.clear();
                         isListening = false;
