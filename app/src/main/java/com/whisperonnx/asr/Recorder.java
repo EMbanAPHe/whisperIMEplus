@@ -248,6 +248,10 @@ public class Recorder {
         while (!Thread.currentThread().isInterrupted()) {
 
             // ── Wait for openStream() ──────────────────────────────────────────
+            // Capture shouldOpen inside the lock, release via finally, THEN
+            // decide whether to skip — avoids double-unlock (which caused
+            // IllegalMonitorStateException on the RecorderWorker thread).
+            boolean shouldOpen;
             streamLock.lock();
             try {
                 while (!streamRequested && !Thread.currentThread().isInterrupted()) {
@@ -258,18 +262,14 @@ public class Recorder {
                     }
                 }
                 if (Thread.currentThread().isInterrupted()) return;
-                streamRequested = false;
-                if (streamShouldClose) {
-                    // closeStream() was called while we were waiting — skip the open.
-                    // This prevents the mic staying on when the keyboard hides quickly.
-                    streamShouldClose = false;
-                    streamLock.unlock();
-                    continue;
-                }
+                streamRequested   = false;
+                // If closeStream() was already called while we waited, don't open.
+                shouldOpen        = !streamShouldClose;
                 streamShouldClose = false;
             } finally {
-                streamLock.unlock();
+                streamLock.unlock(); // exactly one unlock, always
             }
+            if (!shouldOpen) continue; // skip AudioRecord open safely — lock already released
 
             // ── Permission check ───────────────────────────────────────────────
             if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO)

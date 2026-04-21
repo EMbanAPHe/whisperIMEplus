@@ -64,8 +64,12 @@
 
                 
                 <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="8" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
-                    app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    app:layout_column="8" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
+                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+                    app:layout_column="10" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -130,25 +134,25 @@
                 
                 <ImageButton android:id="@+id/btnRecord"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="0" app:layout_columnSpan="6" app:layout_row="2" app:layout_rowSpan="4"
+                    app:layout_column="2" app:layout_columnSpan="6" app:layout_row="2" app:layout_rowSpan="4"
                     app:layout_columnWeight="6" app:layout_rowWeight="4" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_mic_48dp"
                     android:contentDescription="@string/record_button" android:scaleType="centerInside"/>
 
                 
                 <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
+                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
                 <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="3" app:layout_rowSpan="1"
+                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="3" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
 
                 
                 <ImageButton android:id="@+id/btnCapsToggle"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="4" app:layout_rowSpan="1"
+                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="4" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_caps_auto_36dp"
                     android:contentDescription="@string/caps_toggle" android:scaleType="centerInside" android:padding="8dp"/>
@@ -156,7 +160,7 @@
                 
                 <ImageButton android:id="@+id/btnMenuSwap"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
+                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_menu_layout_36dp"
                     android:contentDescription="@string/menu_swap" android:scaleType="centerInside" android:padding="8dp"/>
@@ -234,8 +238,12 @@
                 
                 
                 
+                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="0" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_column="2" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill">
                     <ImageButton android:id="@+id/btnKeyboardSec"
                         android:layout_width="match_parent" android:layout_height="match_parent"
@@ -248,32 +256,32 @@
                 </FrameLayout>
                 <TextView android:id="@+id/btnSecShift"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="4" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Shift"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp" android:alpha="0.55"/>
                 <TextView android:id="@+id/btnSecCtrl"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_column="8" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Ctrl"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp" android:alpha="0.55"/>
                 <TextView android:id="@+id/btnSecAlt"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="8" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_column="10" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Alt"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp" android:alpha="0.55"/>
                 <TextView android:id="@+id/btnSecTab"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="10" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_column="12" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Tab"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp"/>
                 <TextView android:id="@+id/btnSecEsc"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="12" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
-                    app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    app:layout_column="14" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Esc"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp"/>
 
