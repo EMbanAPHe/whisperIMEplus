@@ -86,7 +86,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="4"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill">
+                    app:layout_gravity="fill">
                     <ImageButton
                         android:id="@+id/btnKeyboard"
                         android:layout_width="match_parent"
@@ -119,7 +119,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="4"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/discard_audio"
                     android:gravity="center"
@@ -140,7 +140,7 @@
                     app:layout_rowSpan="2"
                     app:layout_columnWeight="4"
                     app:layout_rowWeight="2"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/cancel_recognition"
                     android:gravity="center"
@@ -161,7 +161,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_send_36dp"
                     android:contentDescription="@string/send"
@@ -178,7 +178,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill" />
+                    app:layout_gravity="fill" />
 
                 <!-- ── Rows 1-4: Mic + control column ─────────────── -->
 
@@ -194,7 +194,7 @@
                     app:layout_rowSpan="4"
                     app:layout_columnWeight="6"
                     app:layout_rowWeight="4"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_mic_48dp"
                     android:contentDescription="@string/record_button"
@@ -212,7 +212,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_caps_auto_36dp"
                     android:contentDescription="@string/caps_toggle"
@@ -230,7 +230,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill">
+                    app:layout_gravity="fill">
                     <ImageButton
                         android:id="@+id/btnSelectAll"
                         android:layout_width="match_parent"
@@ -263,7 +263,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_cut"
                     android:contentDescription="@string/cut"
@@ -282,7 +282,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_menu_layout_36dp"
                     android:contentDescription="@string/menu_swap"
@@ -300,7 +300,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill">
+                    app:layout_gravity="fill">
                     <TextView
                         android:id="@+id/btnClear"
                         android:layout_width="match_parent"
@@ -332,7 +332,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill">
+                    app:layout_gravity="fill">
                     <ImageButton
                         android:id="@+id/btnUndo"
                         android:layout_width="match_parent"
@@ -365,7 +365,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_redo_36dp"
                     android:contentDescription="@string/redo"
@@ -384,7 +384,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/full_stop_toggle"
                     android:gravity="center"
@@ -404,7 +404,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_copy"
                     android:contentDescription="@string/copy"
@@ -423,7 +423,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/break_audio"
                     android:gravity="center"
@@ -444,7 +444,7 @@
                     app:layout_rowSpan="2"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="2"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_forward_del"
                     android:contentDescription="@string/forward_delete"
@@ -463,7 +463,7 @@
                     app:layout_rowSpan="2"
                     app:layout_columnWeight="4"
                     app:layout_rowWeight="2"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_keyboard_del_48dp"
                     android:contentDescription="@string/delete_button"
@@ -481,7 +481,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_paste"
                     android:contentDescription="@string/paste"
@@ -498,7 +498,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill" />
+                    app:layout_gravity="fill" />
 
                 <!-- ── Row 5: Bottom row ───────────────────────────── -->
 
@@ -512,7 +512,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="8"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill" />
+                    app:layout_gravity="fill" />
 
                 <!-- Spacebar (2.5w = 5 virtual cols) -->
                 <TextView
@@ -526,7 +526,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="5"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="@string/space_bar"
                     android:gravity="center"
@@ -545,7 +545,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="3"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_keyboard_return_48dp"
                     android:contentDescription="@string/return_button"
@@ -581,7 +581,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="4"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill">
+                    app:layout_gravity="fill">
                     <ImageButton
                         android:id="@+id/btnKeyboardSec"
                         android:layout_width="match_parent"
@@ -614,7 +614,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="Shift"
                     android:gravity="center"
@@ -634,7 +634,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="Ctrl"
                     android:gravity="center"
@@ -654,7 +654,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="Alt"
                     android:gravity="center"
@@ -674,7 +674,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="Tab"
                     android:gravity="center"
@@ -693,7 +693,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="4"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="Esc"
                     android:gravity="center"
@@ -714,7 +714,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="Home"
                     android:gravity="center"
@@ -732,7 +732,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="End"
                     android:gravity="center"
@@ -750,7 +750,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="PgUp"
                     android:gravity="center"
@@ -768,7 +768,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:text="PgDn"
                     android:gravity="center"
@@ -787,7 +787,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_menu_layout_36dp"
                     android:contentDescription="@string/menu_swap"
@@ -806,7 +806,7 @@
                     app:layout_rowSpan="5"
                     app:layout_columnWeight="12"
                     app:layout_rowWeight="5"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal">
                     <ImageView
                         android:layout_width="match_parent"
@@ -830,7 +830,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_cut"
                     android:contentDescription="@string/cut"
@@ -848,7 +848,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_copy"
                     android:contentDescription="@string/copy"
@@ -866,7 +866,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_paste"
                     android:contentDescription="@string/paste"
@@ -884,7 +884,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_keyboard_del_48dp"
                     android:contentDescription="@string/delete_button"
@@ -902,7 +902,7 @@
                     app:layout_rowSpan="1"
                     app:layout_columnWeight="2"
                     app:layout_rowWeight="1"
-                    android:layout_gravity="fill"
+                    app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal"
                     android:src="@drawable/ic_keyboard_return_48dp"
                     android:contentDescription="@string/return_button"
