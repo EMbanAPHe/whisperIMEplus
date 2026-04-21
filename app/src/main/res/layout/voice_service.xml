@@ -1,4 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Primary grid 16vc x 6r (1u = 2vc):
+  Col 0-3 (2u): KB(r0), Discard(r1), Record(r2-5)
+  Col 4-7 (2u): Cancel(r0-1,2h), Record(r2-5)
+  Col 6-7 (1u): [blank](r2), [blank](r3), Caps(r4), Menu(r5)  -- within Record area
+  Col 8-9  (1u): blank(r0), SelAll(r1), FStop(r2), BrkAudio(r3-4,2h), Space(r5)
+  Col 10-11(1u): blank(r0), Cut(r1),   Undo(r2),  BrkAudio cont,       Space cont
+  Col 12-13(1u): DelUns(r0),Copy(r1),  Redo(r2),  Bksp(r3-4,2h),       Space cont
+  Col 13(+2):  Enter 3vc
+  Col 14-15(1u): Send(r0), Paste(r1), FwdDel(r2), Bksp cont, Enter cont
+
+  Corrections per user:
+  - KB(0-3,r0) Discard(0-3,r1): 2u from LEFT corner
+  - Cancel(4-7,r0-1): 2u wide, 2h
+  - Cols 6-7 rows 2-3: blank buttons (above Caps)
+  - Caps(6-7,r4) Menu(6-7,r5): in right portion of mic area
+  - Record(0-5,r2-5): 3u wide (to left of Caps/Menu column)
+  - DelUns(12-13,r0): next to Send, with blanks to left per user (blank at 8-11)
+  - BrkAudio(8-11,r3-4): 2u wide
+  - Bksp(12-15,r3-4): 2u wide
+  - Space(8-12,r5,5vc) Enter(13-15,r5,3vc)
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -11,66 +33,36 @@
     android:paddingTop="4dp"
     android:paddingBottom="4dp">
 
-    <ProgressBar
-        android:id="@+id/processing_bar"
+    <ProgressBar android:id="@+id/processing_bar"
         style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="4dp"
+        android:layout_width="match_parent" android:layout_height="4dp"
         android:indeterminate="false"
         android:progressTint="@color/colorAccent"
         android:progressBackgroundTint="@color/buttonTonal"
         android:indeterminateTint="@color/colorAccent"/>
 
-    <TextView
-        android:id="@+id/tv_status"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="2dp"
-        android:textSize="13sp"
-        android:textColor="@android:color/holo_red_dark"
-        android:visibility="gone"/>
+    <TextView android:id="@+id/tv_status"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:gravity="center_horizontal" android:paddingHorizontal="10dp"
+        android:paddingVertical="2dp" android:textSize="13sp"
+        android:textColor="@android:color/holo_red_dark" android:visibility="gone"/>
 
-    <LinearLayout
-        android:id="@+id/layout_keyboard_content"
-        android:layout_width="match_parent"
-        android:layout_height="260dp"
+    <LinearLayout android:id="@+id/layout_keyboard_content"
+        android:layout_width="match_parent" android:layout_height="260dp"
         android:orientation="vertical">
 
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
+        <FrameLayout android:layout_width="match_parent" android:layout_height="match_parent">
 
-            <!-- ═══ PRIMARY LAYOUT ═══ -->
+            <!-- ═══ PRIMARY ═══ -->
             <androidx.gridlayout.widget.GridLayout
                 android:id="@+id/layout_primary"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:visibility="visible"
-                app:columnCount="16"
-                app:rowCount="6">
+                android:layout_width="match_parent" android:layout_height="match_parent"
+                android:visibility="visible" app:columnCount="16" app:rowCount="6">
 
-                <!-- Strip col (0-1): rows 0-3 blank, row 4 Caps, row 5 Menu -->
-                <Space android:layout_width="0dp" android:layout_height="0dp"
-                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="4"
-                    app:layout_columnWeight="2" app:layout_rowWeight="4" app:layout_gravity="fill"/>
-                <ImageButton android:id="@+id/btnCapsToggle"
-                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="4" app:layout_rowSpan="1"
-                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
-                    android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_caps_auto_36dp"
-                    android:contentDescription="@string/caps_toggle" android:scaleType="centerInside" android:padding="8dp"/>
-                <ImageButton android:id="@+id/btnMenuSwap"
-                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="0" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
-                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
-                    android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_menu_layout_36dp"
-                    android:contentDescription="@string/menu_swap" android:scaleType="centerInside" android:padding="8dp"/>
-
-                <!-- KB (2u=4vc, row 0) with settings hint -->
-                <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="2" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
+                <!-- KB (2u=4vc, row 0, LEFT CORNER col 0) with settings hint -->
+                <FrameLayout android:layout_width="0dp" android:layout_height="0dp"
+                    android:layout_margin="2dp"
+                    app:layout_column="0" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill">
                     <ImageButton android:id="@+id/btnKeyboard"
                         android:layout_width="match_parent" android:layout_height="match_parent"
@@ -82,16 +74,16 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
-                <!-- Cancel Recognition (1u=2vc wide, 2h) -->
+                <!-- Cancel Recognition (2u=4vc, 2h, col 4-7) -->
                 <TextView android:id="@+id/btnCancel"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="2"
-                    app:layout_columnWeight="2" app:layout_rowWeight="2" app:layout_gravity="fill"
+                    app:layout_column="4" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="2"
+                    app:layout_columnWeight="4" app:layout_rowWeight="2" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="@string/cancel_recognition"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="11sp"
                     android:enabled="false" android:alpha="0.4"/>
 
-                <!-- Row 0 right: blank + DelUns + Send -->
+                <!-- Row 0 right: blank(2u) + DelUns(1u) + Send(1u) -->
                 <Space android:layout_width="0dp" android:layout_height="0dp"
                     app:layout_column="8" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill"/>
@@ -114,10 +106,10 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_send_36dp"
                     android:contentDescription="@string/send" android:scaleType="centerInside" android:padding="8dp"/>
 
-                <!-- Row 1: Discard (2u=4vc) -->
+                <!-- Discard Audio (2u=4vc, row 1, col 0-3) -->
                 <TextView android:id="@+id/btnDiscard"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="2" app:layout_columnSpan="4" app:layout_row="1" app:layout_rowSpan="1"
+                    app:layout_column="0" app:layout_columnSpan="4" app:layout_row="1" app:layout_rowSpan="1"
                     app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="@string/discard_audio"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="12sp"
@@ -155,15 +147,39 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_paste"
                     android:contentDescription="@string/paste" android:scaleType="centerInside" android:padding="10dp"/>
 
-                <!-- Record (3u=6vc, rows 2-5) -->
+                <!-- Record (3u=6vc, col 0-5, rows 2-5) -->
                 <ImageButton android:id="@+id/btnRecord"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
-                    app:layout_column="2" app:layout_columnSpan="6" app:layout_row="2" app:layout_rowSpan="4"
+                    app:layout_column="0" app:layout_columnSpan="6" app:layout_row="2" app:layout_rowSpan="4"
                     app:layout_columnWeight="6" app:layout_rowWeight="4" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_mic_48dp"
                     android:contentDescription="@string/record_button" android:scaleType="centerInside"/>
 
-                <!-- Row 2 right: FStop + Undo + Redo + FwdDel (1h only) -->
+                <!-- Cols 6-7 rows 2-3: TWO BLANK BUTTONS above Caps/Menu -->
+                <Space android:layout_width="0dp" android:layout_height="0dp"
+                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"/>
+                <Space android:layout_width="0dp" android:layout_height="0dp"
+                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="3" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"/>
+
+                <!-- Caps (col 6-7, row 4) -->
+                <ImageButton android:id="@+id/btnCapsToggle"
+                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="4" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_caps_auto_36dp"
+                    android:contentDescription="@string/caps_toggle" android:scaleType="centerInside" android:padding="8dp"/>
+
+                <!-- Menu (col 6-7, row 5 — BOTTOM LEFT of right section) -->
+                <ImageButton android:id="@+id/btnMenuSwap"
+                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+                    app:layout_column="6" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_menu_layout_36dp"
+                    android:contentDescription="@string/menu_swap" android:scaleType="centerInside" android:padding="8dp"/>
+
+                <!-- Row 2: FStop(8-9) + Undo(10-11) + Redo(12-13) + FwdDel(14-15) -->
                 <TextView android:id="@+id/btnFullStop"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
@@ -195,7 +211,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_forward_del"
                     android:contentDescription="@string/forward_delete" android:scaleType="centerInside" android:padding="6dp"/>
 
-                <!-- Rows 3-4: BrkAudio (2u=4vc, 2h) + Bksp (2u=4vc, 2h) -->
+                <!-- Rows 3-4: BrkAudio(8-11=2u,2h) + Bksp(12-15=2u,2h) -->
                 <TextView android:id="@+id/btnBreakAudio"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="4" app:layout_row="3" app:layout_rowSpan="2"
@@ -210,7 +226,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_keyboard_del_48dp"
                     android:contentDescription="@string/delete_button" android:scaleType="centerInside"/>
 
-                <!-- Row 5: Space (5vc) + Enter (3vc) -->
+                <!-- Row 5: Space(8-12=5vc) + Enter(13-15=3vc) -->
                 <TextView android:id="@+id/btnSpace"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="5" app:layout_row="5" app:layout_rowSpan="1"
@@ -227,21 +243,18 @@
             </androidx.gridlayout.widget.GridLayout>
 
 
-            <!-- ═══ SECONDARY LAYOUT ═══ -->
+            <!-- ═══ SECONDARY ═══ -->
             <androidx.gridlayout.widget.GridLayout
                 android:id="@+id/layout_secondary"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:visibility="gone"
-                app:columnCount="16"
-                app:rowCount="6">
+                android:layout_width="match_parent" android:layout_height="match_parent"
+                android:visibility="gone" app:columnCount="16" app:rowCount="6">
 
-                <!-- Row 0: blank(2vc) + KB(4vc=2u) + Shift(2vc) + Ctrl(2vc) + Alt(2vc) + Tab(2vc) + Esc(2vc) -->
-                <!-- blank 0-1 -->
-                <Space android:layout_width="0dp" android:layout_height="0dp"
+                <!-- Row 0: blank placeholder(0-1=1u) + KB(2-5=2u) + Shift(6-7) + Ctrl(8-9) + Alt(10-11) + Tab(12-13) + Esc(14-15) -->
+                <!-- All equal 2vc. Blank fills the gap so no dead space. -->
+                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
-                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"/>
-                <!-- KB 2-5 (4vc = 2u, same as primary) with settings hint -->
+                    app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
+                    android:background="@drawable/rounded_button_tonal" android:alpha="0.2"/>
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="2" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -254,7 +267,6 @@
                         android:src="@drawable/ic_settings_hint" android:scaleType="fitCenter"
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
-                <!-- Shift 6-7, Ctrl 8-9, Alt 10-11, Tab 12-13, Esc 14-15 — all 2vc = 1u -->
                 <TextView android:id="@+id/btnSecShift"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="6" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -286,7 +298,7 @@
                     android:background="@drawable/rounded_button_tonal" android:text="Esc"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp"/>
 
-                <!-- Rows 1-5 left col (0-1, 2vc = 1u): Home, End, PgUp, PgDn, Menu -->
+                <!-- Left col (0-1=1u): Home,End,PgUp,PgDn,Menu — same width as right col -->
                 <TextView android:id="@+id/btnSecHome"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
@@ -318,7 +330,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_menu_layout_36dp"
                     android:contentDescription="@string/menu_swap" android:scaleType="centerInside" android:padding="8dp"/>
 
-                <!-- Rows 1-5 D-pad centre (cols 2-13, 12vc = 6u) -->
+                <!-- D-pad centre (col 2-13=12vc, rows 1-5) -->
                 <FrameLayout android:id="@+id/btnDpad"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="2" app:layout_columnSpan="12" app:layout_row="1" app:layout_rowSpan="5"
@@ -326,10 +338,10 @@
                     android:background="@drawable/rounded_button_tonal">
                     <ImageView android:layout_width="match_parent" android:layout_height="match_parent"
                         android:src="@drawable/ic_dpad" android:scaleType="fitCenter"
-                        android:contentDescription="D-pad" android:importantForAccessibility="no" android:padding="28dp"/>
+                        android:contentDescription="D-pad" android:importantForAccessibility="no" android:padding="24dp"/>
                 </FrameLayout>
 
-                <!-- Rows 1-5 right col (14-15, 2vc = 1u, same size as left): Cut,Copy,Paste,Del,Enter -->
+                <!-- Right col (14-15=1u, same size as left col): Cut,Copy,Paste,Del,Enter -->
                 <ImageButton android:id="@+id/btnSecCut"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="14" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"

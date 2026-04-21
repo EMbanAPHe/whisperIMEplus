@@ -258,7 +258,14 @@ public class Recorder {
                     }
                 }
                 if (Thread.currentThread().isInterrupted()) return;
-                streamRequested   = false;
+                streamRequested = false;
+                if (streamShouldClose) {
+                    // closeStream() was called while we were waiting — skip the open.
+                    // This prevents the mic staying on when the keyboard hides quickly.
+                    streamShouldClose = false;
+                    streamLock.unlock();
+                    continue;
+                }
                 streamShouldClose = false;
             } finally {
                 streamLock.unlock();
@@ -355,7 +362,12 @@ public class Recorder {
                     if (active && loopGen == 0) {
                         loopGen  = curGen;
                         inSpeech = false; hadSpeech = false;
-                        silentFrames = 0; adaptFloor = 0f; segment.reset();
+                        silentFrames = 0;
+                        // Reset noise estimates for new session so we re-bootstrap
+                        // quickly in the new environment rather than carrying over
+                        // a stale estimate from a previous session in a different room.
+                        adaptFloor = 0f; adaptVariance = 0f; bootstrapFrames = 0;
+                        segment.reset();
                         // Pre-roll buffer already populated from idle frames
                         Log.d(TAG, "Session gen=" + loopGen + " pre-roll=" + prCount + " frames");
                     }
@@ -419,7 +431,9 @@ public class Recorder {
                                 inSpeech  = true;
                                 hadSpeech = true;
                                 silentFrames = 0;
-                                adaptFloor   = 0f;
+                                // Do NOT reset adaptFloor here — keep the noise estimate
+                                // across speech segments so the gate stays calibrated if
+                                // background noise increases mid-session.
                                 sendUpdate(MSG_RECORDING);
                             }
                             segment.write(frame, 0, n);
