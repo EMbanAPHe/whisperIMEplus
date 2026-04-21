@@ -233,8 +233,8 @@ public class WhisperInputMethodService extends InputMethodService {
     private View         btnBreakAudio;   // Break Audio - cuts segment, keeps listening
     private ImageButton  btnCapsToggle;   // Capitalisation cycle: auto / upper / lower
     private ImageButton  btnMenuSwap;     // Swap to/from secondary layout
-    private LinearLayout layoutPrimary;   // Primary layout container
-    private LinearLayout layoutSecondary; // Secondary layout container (audio paused)
+    private ViewGroup layoutPrimary;   // Primary layout container (GridLayout in v22)
+    private ViewGroup layoutSecondary; // Secondary layout container (GridLayout in v22)
 
     /**
      * Capitalisation override applied to each Whisper result:
@@ -544,8 +544,8 @@ public class WhisperInputMethodService extends InputMethodService {
         btnBreakAudio   = view.findViewById(R.id.btnBreakAudio);
         btnCapsToggle   = view.findViewById(R.id.btnCapsToggle);
         btnMenuSwap     = view.findViewById(R.id.btnMenuSwap);
-        layoutPrimary   = view.findViewById(R.id.layout_primary);
-        layoutSecondary = view.findViewById(R.id.layout_secondary);
+        layoutPrimary   = view.findViewById(R.id.layout_primary);  // GridLayout
+        layoutSecondary = view.findViewById(R.id.layout_secondary);  // GridLayout
 
         // Restore caps icon in case of orientation change/re-inflation
         updateCapsIcon();
@@ -995,6 +995,8 @@ public class WhisperInputMethodService extends InputMethodService {
                 ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE, 0));
                 ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_ESCAPE, 0));
             }
+            // Escape = send the key AND dismiss the keyboard (standard Esc behaviour)
+            requestHideSelf(0);
         });
         if (btnSecHome != null) btnSecHome.setOnClickListener(v -> {
             tap(v);
