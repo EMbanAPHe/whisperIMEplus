@@ -2,24 +2,25 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="36dp" android:height="36dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <!-- Up chevron: compact, near top, tip at y=4.5 -->
+    
+    
     <path android:fillColor="@android:color/transparent"
-          android:strokeColor="#88FFFFFF" android:strokeWidth="1.8"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
           android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:pathData="M10.5,7.5 L12,5 L13.5,7.5"/>
-    <!-- Down chevron: near bottom, tip at y=19.5 -->
+          android:pathData="M9.5,5.5 L12,1.5 L14.5,5.5"/>
+    
     <path android:fillColor="@android:color/transparent"
-          android:strokeColor="#88FFFFFF" android:strokeWidth="1.8"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
           android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:pathData="M10.5,16.5 L12,19 L13.5,16.5"/>
-    <!-- Left chevron: near left, tip at x=4.5 -->
+          android:pathData="M9.5,18.5 L12,22.5 L14.5,18.5"/>
+    
     <path android:fillColor="@android:color/transparent"
-          android:strokeColor="#88FFFFFF" android:strokeWidth="1.8"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
           android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:pathData="M7.5,10.5 L5,12 L7.5,13.5"/>
-    <!-- Right chevron: near right, tip at x=19.5 -->
+          android:pathData="M5.5,9.5 L1.5,12 L5.5,14.5"/>
+    
     <path android:fillColor="@android:color/transparent"
-          android:strokeColor="#88FFFFFF" android:strokeWidth="1.8"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
           android:strokeLineCap="round" android:strokeLineJoin="round"
-          android:pathData="M16.5,10.5 L19,12 L16.5,13.5"/>
+          android:pathData="M18.5,9.5 L22.5,12 L18.5,14.5"/>
 </vector>

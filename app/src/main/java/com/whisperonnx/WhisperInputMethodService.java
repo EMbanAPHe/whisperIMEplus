@@ -89,6 +89,8 @@ public class WhisperInputMethodService extends InputMethodService {
     private static final String TAG            = "WhisperIME";
     private static final String PREF_LAST_CLOSE_TIME = "imeLastCloseTimeMs";
     private static final long   IDLE_TIMEOUT_MS      = 10L * 60 * 1000; // 10 minutes
+    /** SharedPreferences key — when true, keyboard opens on secondary layout. */
+    private static final String KEY_SECONDARY_LOCKED = "imeSecondaryLocked";
 
     // ── Widgets — assigned in onCreateInputView, null before first inflation ─
     private ImageButton  btnRecord;
@@ -202,6 +204,12 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private boolean prefAutoCapitalise;
     /**
+     * When true, the keyboard opens on the secondary (text-editing) layout
+     * instead of the primary (voice) layout. Toggled by the padlock button in
+     * the secondary layout's top-left area. Persists across sessions.
+     */
+    private boolean prefSecondaryLocked;
+    /**
      * When true, the next onStartInputView auto-start is suppressed.
      * Set by: Cancel button, mic button (stop), keyboard close mid-session.
      * Cleared by: mic button tap (deliberate record), or when a different editor
@@ -233,6 +241,7 @@ public class WhisperInputMethodService extends InputMethodService {
     private View         btnBreakAudio;   // Break Audio - cuts segment, keeps listening
     private ImageButton  btnCapsToggle;   // Capitalisation cycle: auto / upper / lower
     private ImageButton  btnMenuSwap;     // Swap to/from secondary layout
+    private ImageButton  btnSecLock;      // Padlock: lock keyboard to secondary layout
     private ViewGroup layoutPrimary;   // Primary layout container (GridLayout in v22)
     private ViewGroup layoutSecondary; // Secondary layout container (GridLayout in v22)
 
@@ -480,7 +489,10 @@ public class WhisperInputMethodService extends InputMethodService {
         // the view (which Android may reuse without calling onCreateInputView again)
         // would reopen showing the secondary panel with the mic hidden, while
         // startRecordingSession runs invisibly in the background.
-        if (isSecondaryLayout) {
+        //
+        // EXCEPTION: when prefSecondaryLocked is true, the user has explicitly
+        // pinned the secondary layout — keep it active so it reopens on secondary.
+        if (isSecondaryLayout && !prefSecondaryLocked) {
             isSecondaryLayout = false;
             wasListeningBeforeSecondary = false;
             if (layoutPrimary   != null) layoutPrimary.setVisibility(View.VISIBLE);
@@ -713,12 +725,29 @@ public class WhisperInputMethodService extends InputMethodService {
         }
 
         // ── Caps Toggle ────────────────────────────────────────────────
-        // Cycles: auto (hollow shift) -> force upper (solid shift) -> force lower (down shift)
+        // Short press: toggle between auto (0) and force-lower (2).
+        //   If currently force-upper (1), short press returns to auto (0).
+        // Long press: set force-upper (1).  If already force-upper, return to auto.
+        // The hint icon in the upper-right of the button indicates the long-press
+        // uppercase feature is available.
         if (btnCapsToggle != null) {
             btnCapsToggle.setOnClickListener(v -> {
                 tap(v);
-                capsOverride = (capsOverride + 1) % 3;
+                // Short press = auto/lower toggle. If in upper, fall back to auto.
+                if (capsOverride == 2) {
+                    capsOverride = 0;
+                } else {
+                    // From 0 (auto) or 1 (upper) -> 2 (lower) from 1, 2 from 0
+                    capsOverride = (capsOverride == 0) ? 2 : 0;
+                }
                 updateCapsIcon();
+            });
+            btnCapsToggle.setOnLongClickListener(v -> {
+                tap(v);
+                // Long press = toggle force-upper (1) ↔ auto (0).
+                capsOverride = (capsOverride == 1) ? 0 : 1;
+                updateCapsIcon();
+                return true;
             });
         }
 
@@ -799,6 +828,120 @@ public class WhisperInputMethodService extends InputMethodService {
         if (btnSecAlt != null) btnSecAlt.setOnClickListener(v -> {
             tap(v); altActive = !altActive; updateModifierUI();
         });
+
+        // ── Secondary-layout padlock (lock keyboard to open on secondary) ──
+        btnSecLock = view.findViewById(R.id.btnSecLock);
+        if (btnSecLock != null) {
+            btnSecLock.setOnClickListener(v -> {
+                tap(v);
+                prefSecondaryLocked = !prefSecondaryLocked;
+                sp.edit().putBoolean(KEY_SECONDARY_LOCKED, prefSecondaryLocked).apply();
+                updateLockIcon();
+            });
+            updateLockIcon();
+        }
+
+        // ── Markor-style line operations — primary layout ─────────────────
+        // Move Line Up / Move Line Down — selection-aware: operate on the
+        // block of lines spanning the current selection (or the current line
+        // if there is no selection).
+        View btnMoveUp   = view.findViewById(R.id.btnMoveUp);
+        View btnMoveDown = view.findViewById(R.id.btnMoveDown);
+        if (btnMoveUp   != null) btnMoveUp.setOnClickListener(v ->   { tap(v); moveLineUp();   });
+        if (btnMoveDown != null) btnMoveDown.setOnClickListener(v -> { tap(v); moveLineDown(); });
+
+        // ── Markor-style line operations — secondary layout ───────────────
+        View btnSecMoveUp    = view.findViewById(R.id.btnSecMoveUp);
+        View btnSecMoveDown  = view.findViewById(R.id.btnSecMoveDown);
+        View btnSecDuplicate = view.findViewById(R.id.btnSecDuplicate);
+        View btnSecBullet    = view.findViewById(R.id.btnSecBullet);
+        if (btnSecMoveUp    != null) btnSecMoveUp.setOnClickListener(v ->    { tap(v); moveLineUp();         });
+        if (btnSecMoveDown  != null) btnSecMoveDown.setOnClickListener(v ->  { tap(v); moveLineDown();       });
+        if (btnSecDuplicate != null) btnSecDuplicate.setOnClickListener(v -> { tap(v); duplicateLines();     });
+        if (btnSecBullet    != null) btnSecBullet.setOnClickListener(v ->    { tap(v); toggleUnorderedList(); });
+
+        // ── Secondary right-column (new col 12-13): mirror primary edit buttons
+        // These replicate the click/long-click behaviour of their primary counterparts.
+        View btnSecSelAll     = view.findViewById(R.id.btnSecSelectAll);
+        View btnSecUndo       = view.findViewById(R.id.btnSecUndo);
+        View btnSecRedo       = view.findViewById(R.id.btnSecRedo);
+        View btnSecFwdDel     = view.findViewById(R.id.btnSecForwardDel);
+        View btnSecClear      = view.findViewById(R.id.btnSecClear);
+
+        if (btnSecSelAll != null) {
+            btnSecSelAll.setOnClickListener(v -> {
+                tap(v);
+                sendCtrlKey(KeyEvent.KEYCODE_A, false);
+            });
+            btnSecSelAll.setOnLongClickListener(v -> {
+                tap(v);
+                selectCurrentSentence();
+                return true;
+            });
+        }
+        if (btnSecUndo != null) {
+            btnSecUndo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
+            btnSecUndo.setOnLongClickListener(v -> {
+                tap(v);
+                undoLastTranscription();
+                return true;
+            });
+        }
+        if (btnSecRedo != null) {
+            btnSecRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true); });
+        }
+        if (btnSecFwdDel != null) {
+            // Forward delete with long-press repeat — same behaviour as primary.
+            btnSecFwdDel.setOnTouchListener((v, ev) -> {
+                switch (ev.getAction()) {
+                    case android.view.MotionEvent.ACTION_DOWN: {
+                        Object existing = v.getTag();
+                        if (existing instanceof Runnable) {
+                            handler.removeCallbacks((Runnable) existing);
+                            v.setTag(null);
+                        }
+                        tap(v); doForwardDelete();
+                        Runnable repeat = new Runnable() {
+                            @Override public void run() { doForwardDelete(); handler.postDelayed(this, 50); }
+                        };
+                        handler.postDelayed(repeat, 400);
+                        v.setTag(repeat);
+                        break;
+                    }
+                    case android.view.MotionEvent.ACTION_UP:
+                    case android.view.MotionEvent.ACTION_CANCEL: {
+                        Object tag = v.getTag();
+                        if (tag instanceof Runnable) {
+                            handler.removeCallbacks((Runnable) tag);
+                            v.setTag(null);
+                        }
+                        break;
+                    }
+                }
+                return true;
+            });
+        }
+        if (btnSecClear != null) {
+            btnSecClear.setOnClickListener(v -> {
+                tap(v);
+                // Delete Unselected: same implementation as primary btnClear.
+                // getTextBeforeCursor/getTextAfterCursor exclude the current selection
+                // per the Android contract, so deleteSurroundingText(before, after)
+                // never touches the selected region.
+                android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                if (ic == null) return;
+                CharSequence before = ic.getTextBeforeCursor(10_000, 0);
+                CharSequence after  = ic.getTextAfterCursor(10_000, 0);
+                if (before == null) before = "";
+                if (after  == null) after  = "";
+                ic.deleteSurroundingText(before.length(), after.length());
+            });
+            btnSecClear.setOnLongClickListener(v -> {
+                tap(v);
+                deleteCurrentLine();
+                return true;
+            });
+        }
 
         // ── D-pad — drag from center + tap zones at edges ──────────────────
         if (btnDpad != null) {
@@ -2041,6 +2184,236 @@ public class WhisperInputMethodService extends InputMethodService {
     }
 
     /**
+     * Update the padlock icon to reflect the current prefSecondaryLocked state.
+     * Closed padlock = locked (keyboard opens on secondary layout).
+     * Open padlock   = unlocked (keyboard opens on primary layout).
+     */
+    private void updateLockIcon() {
+        if (btnSecLock == null) return;
+        btnSecLock.setImageResource(prefSecondaryLocked
+                ? R.drawable.ic_padlock_closed
+                : R.drawable.ic_padlock_open);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Markor-style line operations (v25)
+    // Selection-aware: if there is no selection, they operate on the current line.
+    // If there is a selection, they operate on the block of lines spanning it.
+    // Cursor position is preserved across the operation.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Move the current block of lines up by one line — swaps with the line above.
+     * If the first line of the block is already the top of the document, no-op.
+     */
+    private void moveLineUp() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        ExtractedText et = ic.getExtractedText(new ExtractedTextRequest(), 0);
+        if (et == null || et.text == null) return;
+        String text = et.text.toString();
+        int selStart = Math.min(et.selectionStart, et.selectionEnd);
+        int selEnd   = Math.max(et.selectionStart, et.selectionEnd);
+        if (selStart < 0 || selEnd > text.length()) return;
+
+        int firstLineStart = (selStart == 0) ? 0 : text.lastIndexOf('\n', selStart - 1) + 1;
+        int lastLineEnd    = text.indexOf('\n', selEnd);
+        if (lastLineEnd == -1) lastLineEnd = text.length();
+        if (firstLineStart == 0) return;  // already at top — can't move up
+
+        int prevLineStart = (firstLineStart - 1 == 0)
+                ? 0
+                : text.lastIndexOf('\n', firstLineStart - 2) + 1;
+
+        String prevLine     = text.substring(prevLineStart, firstLineStart - 1);
+        String currentBlock = text.substring(firstLineStart, lastLineEnd);
+        String newSegment   = currentBlock + "\n" + prevLine;
+        int shift = prevLine.length() + 1;  // how many chars selection moves up
+
+        try {
+            ic.beginBatchEdit();
+            ic.setSelection(prevLineStart, lastLineEnd);
+            ic.commitText(newSegment, 1);
+            ic.setSelection(selStart - shift, selEnd - shift);
+            ic.endBatchEdit();
+        } catch (Exception e) {
+            Log.w(TAG, "moveLineUp failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Move the current block of lines down by one line — swaps with the line below.
+     * If the last line of the block is already the bottom of the document, no-op.
+     */
+    private void moveLineDown() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        ExtractedText et = ic.getExtractedText(new ExtractedTextRequest(), 0);
+        if (et == null || et.text == null) return;
+        String text = et.text.toString();
+        int selStart = Math.min(et.selectionStart, et.selectionEnd);
+        int selEnd   = Math.max(et.selectionStart, et.selectionEnd);
+        if (selStart < 0 || selEnd > text.length()) return;
+
+        int firstLineStart = (selStart == 0) ? 0 : text.lastIndexOf('\n', selStart - 1) + 1;
+        int lastLineEnd    = text.indexOf('\n', selEnd);
+        if (lastLineEnd == -1) lastLineEnd = text.length();
+        if (lastLineEnd >= text.length()) return;  // already at bottom — can't move down
+
+        int nextLineStart = lastLineEnd + 1;  // skip the \n at lastLineEnd
+        int nextLineEnd   = text.indexOf('\n', nextLineStart);
+        if (nextLineEnd == -1) nextLineEnd = text.length();
+
+        String nextLine     = text.substring(nextLineStart, nextLineEnd);
+        String currentBlock = text.substring(firstLineStart, lastLineEnd);
+        String newSegment   = nextLine + "\n" + currentBlock;
+        int shift = nextLine.length() + 1;  // how many chars selection moves down
+
+        try {
+            ic.beginBatchEdit();
+            ic.setSelection(firstLineStart, nextLineEnd);
+            ic.commitText(newSegment, 1);
+            ic.setSelection(selStart + shift, selEnd + shift);
+            ic.endBatchEdit();
+        } catch (Exception e) {
+            Log.w(TAG, "moveLineDown failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Duplicate the current block of lines — inserts a copy immediately after.
+     * Cursor position and any selection are preserved in the original (upper) copy.
+     */
+    private void duplicateLines() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        ExtractedText et = ic.getExtractedText(new ExtractedTextRequest(), 0);
+        if (et == null || et.text == null) return;
+        String text = et.text.toString();
+        int selStart = Math.min(et.selectionStart, et.selectionEnd);
+        int selEnd   = Math.max(et.selectionStart, et.selectionEnd);
+        if (selStart < 0 || selEnd > text.length()) return;
+
+        int firstLineStart = (selStart == 0) ? 0 : text.lastIndexOf('\n', selStart - 1) + 1;
+        int lastLineEnd    = text.indexOf('\n', selEnd);
+        if (lastLineEnd == -1) lastLineEnd = text.length();
+
+        String block = text.substring(firstLineStart, lastLineEnd);
+        String insert = "\n" + block;
+
+        try {
+            ic.beginBatchEdit();
+            // Move to end of current block, then insert "\n" + block.
+            ic.setSelection(lastLineEnd, lastLineEnd);
+            ic.commitText(insert, 1);
+            // Restore original selection (stays in the upper copy).
+            ic.setSelection(selStart, selEnd);
+            ic.endBatchEdit();
+        } catch (Exception e) {
+            Log.w(TAG, "duplicateLines failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Toggle markdown unordered list ("- ") prefix on every line in the current block.
+     *
+     * Behaviour matches Markor:
+     *   - If every non-empty line in the block already starts with "- " or "* ",
+     *     remove that prefix from each line.
+     *   - Otherwise, prepend "- " to every non-empty line.
+     *
+     * Empty lines are left unchanged. Cursor/selection positions are adjusted to
+     * track their original characters (see adjustPositionForListToggle).
+     */
+    private void toggleUnorderedList() {
+        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        ExtractedText et = ic.getExtractedText(new ExtractedTextRequest(), 0);
+        if (et == null || et.text == null) return;
+        String text = et.text.toString();
+        int selStart = Math.min(et.selectionStart, et.selectionEnd);
+        int selEnd   = Math.max(et.selectionStart, et.selectionEnd);
+        if (selStart < 0 || selEnd > text.length()) return;
+
+        int firstLineStart = (selStart == 0) ? 0 : text.lastIndexOf('\n', selStart - 1) + 1;
+        int lastLineEnd    = text.indexOf('\n', selEnd);
+        if (lastLineEnd == -1) lastLineEnd = text.length();
+
+        String block = text.substring(firstLineStart, lastLineEnd);
+        String[] lines = block.split("\n", -1);
+
+        // Decide direction: remove prefixes only if every non-empty line has one.
+        boolean allHave   = true;
+        boolean anyContent = false;
+        for (String line : lines) {
+            if (line.isEmpty()) continue;
+            anyContent = true;
+            if (!line.startsWith("- ") && !line.startsWith("* ")) {
+                allHave = false;
+                break;
+            }
+        }
+        if (!anyContent) allHave = false;  // all lines empty -> add prefixes
+        boolean removing = allHave;
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) sb.append('\n');
+            if (lines[i].isEmpty()) {
+                sb.append(lines[i]);
+            } else if (removing) {
+                sb.append(lines[i].substring(2));
+            } else {
+                sb.append("- ").append(lines[i]);
+            }
+        }
+        String newBlock = sb.toString();
+
+        int newSelStart = adjustPositionForListToggle(selStart, firstLineStart, lines, removing);
+        int newSelEnd   = adjustPositionForListToggle(selEnd,   firstLineStart, lines, removing);
+
+        try {
+            ic.beginBatchEdit();
+            ic.setSelection(firstLineStart, lastLineEnd);
+            ic.commitText(newBlock, 1);
+            ic.setSelection(newSelStart, newSelEnd);
+            ic.endBatchEdit();
+        } catch (Exception e) {
+            Log.w(TAG, "toggleUnorderedList failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Map a cursor position from the original text to its position after
+     * prefix addition/removal. For each line that got a prefix added, any
+     * position past the start of that line shifts +2.  For removal, it
+     * shifts -2 (clamped if the cursor was inside the "- " prefix itself).
+     */
+    private int adjustPositionForListToggle(int pos, int firstLineStart,
+                                            String[] lines, boolean removing) {
+        if (pos <= firstLineStart) return pos;
+        int shift = 0;
+        int cursor = firstLineStart;
+        for (int i = 0; i < lines.length; i++) {
+            int lineEnd = cursor + lines[i].length();
+            if (pos <= cursor) break;  // pos is before this line — done
+            if (!lines[i].isEmpty()) {
+                if (removing) {
+                    // Subtract up to 2 chars, but not more than pos is past cursor
+                    // (so if pos landed inside the removed "- " prefix, it clamps
+                    // to the new start-of-line rather than going negative).
+                    int maxRemove = Math.min(pos - cursor, 2);
+                    shift -= maxRemove;
+                } else {
+                    shift += 2;  // "- " added
+                }
+            }
+            cursor = lineEnd + 1;  // account for the \n
+        }
+        return pos + shift;
+    }
+
+    /**
      * Toggle between the primary (recording) and secondary (extended controls) layouts.
      *
      * Switching TO secondary:
@@ -2250,14 +2623,20 @@ public class WhisperInputMethodService extends InputMethodService {
     private void restoreButtonState() {
         // If the view was re-inflated (onCreateInputView called), the XML defaults
         // layoutPrimary=VISIBLE and layoutSecondary=GONE. Since onFinishInputView
-        // always resets isSecondaryLayout=false before the view can be reused,
-        // this belt-and-suspenders guard ensures we never show a hidden primary panel.
-        if (!isSecondaryLayout) {
+        // only resets isSecondaryLayout=false when prefSecondaryLocked is false,
+        // honour the lock here too: if the user pinned the secondary layout, show
+        // it on keyboard re-show (even if this is a cold inflation).
+        if (prefSecondaryLocked) {
+            isSecondaryLayout = true;
+            if (layoutPrimary   != null) layoutPrimary.setVisibility(View.GONE);
+            if (layoutSecondary != null) layoutSecondary.setVisibility(View.VISIBLE);
+        } else if (!isSecondaryLayout) {
             if (layoutPrimary   != null) layoutPrimary.setVisibility(View.VISIBLE);
             if (layoutSecondary != null) layoutSecondary.setVisibility(View.GONE);
         }
         updateCapsIcon();
         updateModifierUI();
+        updateLockIcon();
         if (isListening) {
             setCancelEnabled(true);
             setMicState(isRecording ? MicState.RECORDING : MicState.LISTENING);
@@ -2406,6 +2785,7 @@ public class WhisperInputMethodService extends InputMethodService {
         prefAutoSend        = sp.getBoolean(SettingsActivity.KEY_AUTO_SEND,        false);
         prefHapticRecording  = sp.getBoolean(SettingsActivity.KEY_HAPTIC_RECORDING, true);
         prefAutoCapitalise   = sp.getBoolean(SettingsActivity.KEY_AUTO_CAPITALISE,   true);
+        prefSecondaryLocked  = sp.getBoolean(KEY_SECONDARY_LOCKED,                   false);
         // Audio focus preference — propagate immediately to Recorder
         boolean muteAudio = sp.getBoolean("imeMuteAudio", true);
         if (mRecorder != null) mRecorder.setMuteAudioOnRecord(muteAudio);

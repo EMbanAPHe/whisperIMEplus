@@ -66,6 +66,13 @@
     <string name="full_stop_toggle">.,?!</string>
     <string name="forward_delete">Del\n⌦</string>
 
+    <!-- v25 Markor-style editing buttons -->
+    <string name="move_line_up">Move line up</string>
+    <string name="move_line_down">Move line down</string>
+    <string name="duplicate_lines">Duplicate line(s)</string>
+    <string name="unordered_list">Toggle bullet list</string>
+    <string name="lock_secondary">Lock to secondary layout</string>
+
     <!-- Settings sections -->
     <string name="settings_listening_mode">Listening Mode</string>
     <string name="settings_voice_keyboard">Streaming Behaviour</string>
