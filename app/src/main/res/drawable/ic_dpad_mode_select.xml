@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp" android:height="36dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Text selection indicator — two I-beams with a shaded bar between them,
+         indicating the d-pad is in extend-selection mode. -->
+    <!-- Left cursor -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M5,6 L8,6 L8,7 L7,7 L7,17 L8,17 L8,18 L5,18 L5,17 L6,17 L6,7 L5,7 Z"/>
+    <!-- Right cursor -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M16,6 L19,6 L19,7 L18,7 L18,17 L19,17 L19,18 L16,18 L16,17 L17,17 L17,7 L16,7 Z"/>
+    <!-- Selection highlight between the cursors -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.4"
+          android:pathData="M7,7 L17,7 L17,17 L7,17 Z"/>
+</vector>

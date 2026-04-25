@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="13dp" android:height="13dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Small "delete surrounding text" hint icon:
+         two arrows sweeping inward from both ends toward a cursor in the centre.
+         Used as hint overlay on btnSecClear when Shift is active (meaning the
+         normal "delete unselected" action is now the long-press). -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M4,11 L9,8 L9,10.5 L15,10.5 L15,8 L20,11 L15,14 L15,11.5 L9,11.5 L9,14 Z"/>
+</vector>

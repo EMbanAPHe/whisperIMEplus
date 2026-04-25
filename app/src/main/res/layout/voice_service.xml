@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -32,12 +31,13 @@
 
         <FrameLayout android:layout_width="match_parent" android:layout_height="match_parent">
 
-
+            <!-- ═══════════════════ PRIMARY LAYOUT ═══════════════════ -->
             <androidx.gridlayout.widget.GridLayout
                 android:id="@+id/layout_primary"
                 android:layout_width="match_parent" android:layout_height="match_parent"
                 android:visibility="visible" app:columnCount="16" app:rowCount="6">
 
+                <!-- R0 C0-3: Exit / KB button (with settings hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp"
                     android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
@@ -52,14 +52,25 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
-                <TextView android:id="@+id/btnCancel"
-                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+                <!-- R0-1 C4-7: Cancel Recognition
+                     Long press: toggle "listen on launch" (prefAutoStart).
+                     Hint icon in upper-right shows whether auto-start is currently on. -->
+                <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="4" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="2"
-                    app:layout_columnWeight="4" app:layout_rowWeight="2" app:layout_gravity="fill"
-                    android:background="@drawable/rounded_button_tonal" android:text="@string/cancel_recognition"
-                    android:gravity="center" android:textColor="#FFFFFF" android:textSize="11sp"
-                    android:enabled="false" android:alpha="0.4"/>
+                    app:layout_columnWeight="4" app:layout_rowWeight="2" app:layout_gravity="fill">
+                    <TextView android:id="@+id/btnCancel"
+                        android:layout_width="match_parent" android:layout_height="match_parent"
+                        android:background="@drawable/rounded_button_tonal" android:text="@string/cancel_recognition"
+                        android:gravity="center" android:textColor="#FFFFFF" android:textSize="11sp"
+                        android:enabled="false" android:alpha="0.4"/>
+                    <ImageView android:id="@+id/imgCancelHint"
+                        android:layout_width="13dp" android:layout_height="13dp"
+                        android:layout_gravity="top|end" android:layout_margin="3dp"
+                        android:src="@drawable/ic_autostart_hint" android:scaleType="fitCenter"
+                        android:importantForAccessibility="no" android:contentDescription=""/>
+                </FrameLayout>
 
+                <!-- R0 C8-9: Move Line Up -->
                 <ImageButton android:id="@+id/btnMoveUp"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -67,6 +78,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_move_line_up"
                     android:contentDescription="@string/move_line_up" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R0 C10-11: Select All (with select-sentence hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="10" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -80,6 +92,7 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R0 C12-13: Delete Unselected (with delete-line hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -93,6 +106,7 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R0 C14-15: Send -->
                 <ImageButton android:id="@+id/btnSend"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="14" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -100,6 +114,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_send_36dp"
                     android:contentDescription="@string/send" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R1 C0-3: Discard Audio -->
                 <TextView android:id="@+id/btnDiscard"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="4" app:layout_row="1" app:layout_rowSpan="1"
@@ -108,6 +123,7 @@
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="12sp"
                     android:enabled="false" android:alpha="0.4"/>
 
+                <!-- R1 C8-9: Move Line Down -->
                 <ImageButton android:id="@+id/btnMoveDown"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
@@ -115,18 +131,21 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_move_line_down"
                     android:contentDescription="@string/move_line_down" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R1 C10-11: Cut -->
                 <ImageButton android:id="@+id/btnCut"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="10" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_cut"
                     android:contentDescription="@string/cut" android:scaleType="centerInside" android:padding="10dp"/>
+                <!-- R1 C12-13: Copy -->
                 <ImageButton android:id="@+id/btnCopy"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_copy"
                     android:contentDescription="@string/copy" android:scaleType="centerInside" android:padding="10dp"/>
+                <!-- R1 C14-15: Paste -->
                 <ImageButton android:id="@+id/btnPaste"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="14" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
@@ -134,6 +153,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_paste"
                     android:contentDescription="@string/paste" android:scaleType="centerInside" android:padding="10dp"/>
 
+                <!-- R2-5 C2-7: Mic (record) button -->
                 <ImageButton android:id="@+id/btnRecord"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="2" app:layout_columnSpan="6" app:layout_row="2" app:layout_rowSpan="4"
@@ -141,6 +161,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_mic_48dp"
                     android:contentDescription="@string/record_button" android:scaleType="centerInside"/>
 
+                <!-- R2 C0-1: Caps toggle (with long-press-uppercase hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -154,6 +175,7 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R3-4 C0-1: Blank filler buttons -->
                 <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="2" app:layout_row="3" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
@@ -163,6 +185,7 @@
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
 
+                <!-- R5 C0-1: Menu / secondary layout swap -->
                 <ImageButton android:id="@+id/btnMenuSwap"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
@@ -170,6 +193,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_menu_layout_36dp"
                     android:contentDescription="@string/menu_swap" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R2 C8-9: Full stop / punctuation -->
                 <TextView android:id="@+id/btnFullStop"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
@@ -177,6 +201,7 @@
                     android:background="@drawable/rounded_button_tonal" android:text="@string/full_stop_toggle"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold"/>
 
+                <!-- R2 C10-11: Undo (with undo-transcription hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="10" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -190,26 +215,41 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R2 C12-13: Redo -->
                 <ImageButton android:id="@+id/btnRedo"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_redo_36dp"
                     android:contentDescription="@string/redo" android:scaleType="centerInside" android:padding="8dp"/>
+
+                <!-- R2 C14-15: Forward Delete (smaller padding than backspace to match visual size) -->
                 <ImageButton android:id="@+id/btnForwardDel"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="14" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_forward_del"
-                    android:contentDescription="@string/forward_delete" android:scaleType="centerInside" android:padding="6dp"/>
+                    android:contentDescription="@string/forward_delete" android:scaleType="centerInside" android:padding="12dp"/>
 
-                <TextView android:id="@+id/btnBreakAudio"
-                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+                <!-- R3-4 C8-11: Break Audio
+                     Long press: toggle streaming mode (prefAutoStop).
+                     Hint icon shows whether streaming is currently on. -->
+                <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="4" app:layout_row="3" app:layout_rowSpan="2"
-                    app:layout_columnWeight="4" app:layout_rowWeight="2" app:layout_gravity="fill"
-                    android:background="@drawable/rounded_button_tonal" android:text="@string/break_audio"
-                    android:gravity="center" android:textColor="#FFFFFF" android:textSize="12sp"
-                    android:enabled="false" android:alpha="0.4"/>
+                    app:layout_columnWeight="4" app:layout_rowWeight="2" app:layout_gravity="fill">
+                    <TextView android:id="@+id/btnBreakAudio"
+                        android:layout_width="match_parent" android:layout_height="match_parent"
+                        android:background="@drawable/rounded_button_tonal" android:text="@string/break_audio"
+                        android:gravity="center" android:textColor="#FFFFFF" android:textSize="12sp"
+                        android:enabled="false" android:alpha="0.4"/>
+                    <ImageView android:id="@+id/imgBreakAudioHint"
+                        android:layout_width="13dp" android:layout_height="13dp"
+                        android:layout_gravity="top|end" android:layout_margin="3dp"
+                        android:src="@drawable/ic_streaming_hint" android:scaleType="fitCenter"
+                        android:importantForAccessibility="no" android:contentDescription=""/>
+                </FrameLayout>
+
+                <!-- R3-4 C12-15: Delete (backspace) -->
                 <ImageButton android:id="@+id/btnDel"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="4" app:layout_row="3" app:layout_rowSpan="2"
@@ -217,12 +257,15 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_keyboard_del_48dp"
                     android:contentDescription="@string/delete_button" android:scaleType="centerInside"/>
 
+                <!-- R5 C8-12: Space bar -->
                 <TextView android:id="@+id/btnSpace"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="5" app:layout_row="5" app:layout_rowSpan="1"
                     app:layout_columnWeight="5" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="@string/space_bar"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="30sp"/>
+
+                <!-- R5 C13-15: Enter -->
                 <ImageButton android:id="@+id/btnEnter"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="13" app:layout_columnSpan="3" app:layout_row="5" app:layout_rowSpan="1"
@@ -233,11 +276,13 @@
             </androidx.gridlayout.widget.GridLayout>
 
 
+            <!-- ═══════════════════ SECONDARY LAYOUT ═══════════════════ -->
             <androidx.gridlayout.widget.GridLayout
                 android:id="@+id/layout_secondary"
                 android:layout_width="match_parent" android:layout_height="match_parent"
                 android:visibility="gone" app:columnCount="16" app:rowCount="6">
 
+                <!-- R0 C0-3: KB button (with settings hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="4" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="4" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -251,18 +296,23 @@
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R0 C4-5: Shift -->
                 <TextView android:id="@+id/btnSecShift"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="4" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Shift"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp" android:alpha="0.55"/>
+
+                <!-- R0 C6-7: Ctrl -->
                 <TextView android:id="@+id/btnSecCtrl"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="6" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:text="Ctrl"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp" android:alpha="0.55"/>
+
+                <!-- R0 C8-9: Alt -->
                 <TextView android:id="@+id/btnSecAlt"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="8" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -270,6 +320,7 @@
                     android:background="@drawable/rounded_button_tonal" android:text="Alt"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp" android:alpha="0.55"/>
 
+                <!-- R0 C10-11: Tab -->
                 <TextView android:id="@+id/btnSecTab"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="10" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -277,6 +328,7 @@
                     android:background="@drawable/rounded_button_tonal" android:text="Tab"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp"/>
 
+                <!-- R0 C12-13: Delete Unselected (with delete-line hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -284,12 +336,14 @@
                         android:layout_width="match_parent" android:layout_height="match_parent"
                         android:background="@drawable/rounded_button_tonal" android:text="@string/delete_unselected"
                         android:gravity="center" android:textColor="#FFFFFF" android:textSize="10sp"/>
-                    <ImageView android:layout_width="13dp" android:layout_height="13dp"
+                    <ImageView android:id="@+id/imgSecClearHint"
+                        android:layout_width="13dp" android:layout_height="13dp"
                         android:layout_gravity="top|end" android:layout_margin="3dp"
                         android:src="@drawable/ic_delete_line_hint" android:scaleType="fitCenter"
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R0 C14-15: Esc -->
                 <TextView android:id="@+id/btnSecEsc"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="14" app:layout_columnSpan="2" app:layout_row="0" app:layout_rowSpan="1"
@@ -297,6 +351,7 @@
                     android:background="@drawable/rounded_button_tonal" android:text="Esc"
                     android:gravity="center" android:textColor="#FFFFFF" android:textSize="13sp"/>
 
+                <!-- R1-5 C0-1: Home / End / PgUp / PgDn / Menu -->
                 <TextView android:id="@+id/btnSecHome"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="0" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
@@ -328,6 +383,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_menu_layout_36dp"
                     android:contentDescription="@string/menu_swap" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R1-4 C2-3: Markor text operations (Move Up/Down/Duplicate/Bullet) -->
                 <ImageButton android:id="@+id/btnSecMoveUp"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="2" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
@@ -352,21 +408,31 @@
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_unordered_list"
                     android:contentDescription="@string/unordered_list" android:scaleType="centerInside" android:padding="8dp"/>
-                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
+
+                <!-- R5 C2-3: D-pad mode toggle button
+                     Tap to toggle between cursor-move and extend-selection modes.
+                     Icon matches current mode: cursor (normal) or selection (extended). -->
+                <ImageButton android:id="@+id/btnDpadMode"
+                    android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="2" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
-                    android:background="@drawable/rounded_button_tonal" android:alpha="0.25"/>
+                    android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_dpad_mode_cursor"
+                    android:contentDescription="@string/dpad_mode_toggle" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R1-5 C4-11: D-pad touch area (8 columns wide)
+                     The ImageView has an ID so we can swap its drawable when mode changes. -->
                 <FrameLayout android:id="@+id/btnDpad"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="4" app:layout_columnSpan="8" app:layout_row="1" app:layout_rowSpan="5"
                     app:layout_columnWeight="8" app:layout_rowWeight="5" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal">
-                    <ImageView android:layout_width="match_parent" android:layout_height="match_parent"
+                    <ImageView android:id="@+id/imgDpad"
+                        android:layout_width="match_parent" android:layout_height="match_parent"
                         android:src="@drawable/ic_dpad" android:scaleType="fitCenter"
                         android:contentDescription="D-pad" android:importantForAccessibility="no" android:padding="40dp"/>
                 </FrameLayout>
 
+                <!-- R1 C12-13: Select All (with select-sentence hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -374,12 +440,14 @@
                         android:layout_width="match_parent" android:layout_height="match_parent"
                         android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_select_all"
                         android:contentDescription="@string/select_all" android:scaleType="centerInside" android:padding="10dp"/>
-                    <ImageView android:layout_width="13dp" android:layout_height="13dp"
+                    <ImageView android:id="@+id/imgSecSelectAllHint"
+                        android:layout_width="13dp" android:layout_height="13dp"
                         android:layout_gravity="top|end" android:layout_margin="3dp"
                         android:src="@drawable/ic_select_sentence_hint" android:scaleType="fitCenter"
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R2 C12-13: Undo (with undo-transcription hint) -->
                 <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="2" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill">
@@ -387,25 +455,30 @@
                         android:layout_width="match_parent" android:layout_height="match_parent"
                         android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_undo_36dp"
                         android:contentDescription="@string/undo" android:scaleType="centerInside" android:padding="8dp"/>
-                    <ImageView android:layout_width="13dp" android:layout_height="13dp"
+                    <ImageView android:id="@+id/imgSecUndoHint"
+                        android:layout_width="13dp" android:layout_height="13dp"
                         android:layout_gravity="top|end" android:layout_margin="3dp"
                         android:src="@drawable/ic_undo_sentence_hint" android:scaleType="fitCenter"
                         android:importantForAccessibility="no" android:contentDescription=""/>
                 </FrameLayout>
 
+                <!-- R3 C12-13: Redo -->
                 <ImageButton android:id="@+id/btnSecRedo"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="3" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_redo_36dp"
                     android:contentDescription="@string/redo" android:scaleType="centerInside" android:padding="8dp"/>
+
+                <!-- R4 C12-13: Forward Delete (larger padding to appear same size as backspace) -->
                 <ImageButton android:id="@+id/btnSecForwardDel"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="4" app:layout_rowSpan="1"
                     app:layout_columnWeight="2" app:layout_rowWeight="1" app:layout_gravity="fill"
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_forward_del"
-                    android:contentDescription="@string/forward_delete" android:scaleType="centerInside" android:padding="6dp"/>
+                    android:contentDescription="@string/forward_delete" android:scaleType="centerInside" android:padding="12dp"/>
 
+                <!-- R5 C12-13: Lock (padlock) -->
                 <ImageButton android:id="@+id/btnSecLock"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="12" app:layout_columnSpan="2" app:layout_row="5" app:layout_rowSpan="1"
@@ -413,6 +486,7 @@
                     android:background="@drawable/rounded_button_tonal" android:src="@drawable/ic_padlock_open"
                     android:contentDescription="@string/lock_secondary" android:scaleType="centerInside" android:padding="8dp"/>
 
+                <!-- R1-5 C14-15: Cut / Copy / Paste / Backspace / Enter -->
                 <ImageButton android:id="@+id/btnSecCut"
                     android:layout_width="0dp" android:layout_height="0dp" android:layout_margin="2dp"
                     app:layout_column="14" app:layout_columnSpan="2" app:layout_row="1" app:layout_rowSpan="1"

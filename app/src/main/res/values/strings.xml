@@ -72,6 +72,8 @@
     <string name="duplicate_lines">Duplicate line(s)</string>
     <string name="unordered_list">Toggle bullet list</string>
     <string name="lock_secondary">Lock to secondary layout</string>
+    <!-- v27 -->
+    <string name="dpad_mode_toggle">Toggle d-pad selection mode</string>
 
     <!-- Settings sections -->
     <string name="settings_listening_mode">Listening Mode</string>

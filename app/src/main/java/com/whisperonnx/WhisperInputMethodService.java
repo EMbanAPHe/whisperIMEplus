@@ -210,6 +210,26 @@ public class WhisperInputMethodService extends InputMethodService {
      */
     private boolean prefSecondaryLocked;
     /**
+     * D-pad selection mode — when true the touchpad extends the selection from the
+     * touch-down position in all four directions instead of moving the cursor.
+     * Toggled by the small blank button below the Markor column in the secondary layout.
+     * Resets when leaving the secondary layout.
+     */
+    private boolean dpadSelectionMode = false;
+
+    // ── Secondary layout — hint ImageViews and inner buttons we need to
+    //    reference for the Shift "swap secondary→primary" feature ──────────────
+    private ImageButton btnSecSelectAll;
+    private ImageView   imgSecSelectAllHint;
+    private ImageButton btnSecUndo;
+    private ImageView   imgSecUndoHint;
+    private View        btnSecClearRef;     // TextView in the secondary Del Unselected FrameLayout
+    private ImageView   imgSecClearHint;
+    private ImageView   imgDpad;            // inner ImageView of the d-pad FrameLayout
+    private ImageButton btnDpadMode;        // d-pad mode toggle button
+    private ImageView   imgCancelHint;      // auto-start toggle hint on Cancel button
+    private ImageView   imgBreakAudioHint;  // streaming toggle hint on Break Audio button
+    /**
      * When true, the next onStartInputView auto-start is suppressed.
      * Set by: Cancel button, mic button (stop), keyboard close mid-session.
      * Cleared by: mic button tap (deliberate record), or when a different editor
@@ -517,6 +537,14 @@ public class WhisperInputMethodService extends InputMethodService {
             wasListeningBeforeSecondary = false;
             if (layoutPrimary   != null) layoutPrimary.setVisibility(View.VISIBLE);
             if (layoutSecondary != null) layoutSecondary.setVisibility(View.GONE);
+        }
+        // Always reset d-pad selection mode and secondary modifier states on hide —
+        // these are transient session states that should not persist across keyboard shows.
+        dpadSelectionMode = false;
+        updateDpadModeUI();
+        if (shiftActive || ctrlActive || altActive) {
+            shiftActive = false; ctrlActive = false; altActive = false;
+            updateModifierUI();
         }
         // Clear modifier key state — modifiers must not persist across keyboard sessions.
         shiftActive = false;
@@ -861,6 +889,52 @@ public class WhisperInputMethodService extends InputMethodService {
             updateLockIcon();
         }
 
+        // ── Bind hint ImageViews (for dynamic state display + Shift swap) ─────
+        imgCancelHint        = view.findViewById(R.id.imgCancelHint);
+        imgBreakAudioHint    = view.findViewById(R.id.imgBreakAudioHint);
+        imgDpad              = view.findViewById(R.id.imgDpad);
+        imgSecSelectAllHint  = view.findViewById(R.id.imgSecSelectAllHint);
+        imgSecUndoHint       = view.findViewById(R.id.imgSecUndoHint);
+        imgSecClearHint      = view.findViewById(R.id.imgSecClearHint);
+        btnSecSelectAll      = view.findViewById(R.id.btnSecSelectAll);
+        btnSecUndo           = view.findViewById(R.id.btnSecUndo);
+        btnSecClearRef       = view.findViewById(R.id.btnSecClear);
+
+        // ── Cancel long press: toggle "listen on launch" (prefAutoStart) ────────
+        if (btnCancel != null) {
+            btnCancel.setOnLongClickListener(v -> {
+                tap(v);
+                prefAutoStart = !prefAutoStart;
+                sp.edit().putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, prefAutoStart).apply();
+                updateCancelHint();
+                return true;
+            });
+            updateCancelHint();
+        }
+
+        // ── Break Audio long press: toggle streaming mode (prefAutoStop) ────────
+        if (btnBreakAudio != null) {
+            btnBreakAudio.setOnLongClickListener(v -> {
+                tap(v);
+                prefAutoStop = !prefAutoStop;
+                sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
+                if (isListening) continuousMode = prefAutoStop;
+                updateBreakHint();
+                return true;
+            });
+            updateBreakHint();
+        }
+
+        // ── D-pad mode toggle button ──────────────────────────────────────────
+        btnDpadMode = view.findViewById(R.id.btnDpadMode);
+        if (btnDpadMode != null) {
+            btnDpadMode.setOnClickListener(v -> {
+                tap(v);
+                dpadSelectionMode = !dpadSelectionMode;
+                updateDpadModeUI();
+            });
+        }
+
         // ── Markor-style line operations — primary layout ─────────────────
         // Move Line Up / Move Line Down — selection-aware: operate on the
         // block of lines spanning the current selection (or the current line
@@ -880,20 +954,15 @@ public class WhisperInputMethodService extends InputMethodService {
         if (btnSecDuplicate != null) btnSecDuplicate.setOnClickListener(v -> { tap(v); duplicateLines();     });
         if (btnSecBullet    != null) btnSecBullet.setOnClickListener(v ->    { tap(v); toggleUnorderedList(); });
 
-        // ── Secondary right-column (new col 12-13): mirror primary edit buttons
-        // These replicate the click/long-click behaviour of their primary counterparts.
-        View btnSecSelAll     = view.findViewById(R.id.btnSecSelectAll);
-        View btnSecUndo       = view.findViewById(R.id.btnSecUndo);
-        View btnSecRedo       = view.findViewById(R.id.btnSecRedo);
-        View btnSecFwdDel     = view.findViewById(R.id.btnSecForwardDel);
-        View btnSecClear      = view.findViewById(R.id.btnSecClear);
-
-        if (btnSecSelAll != null) {
-            btnSecSelAll.setOnClickListener(v -> {
+        // ── Secondary right-column (col 12-13): SelectAll / Undo / Redo / FwdDel / DelUnsel ──
+        // btnSecSelectAll and btnSecUndo are already bound as fields above.
+        // Their click listeners are set here initially and may be swapped by updateSecondaryShiftUI().
+        if (btnSecSelectAll != null) {
+            btnSecSelectAll.setOnClickListener(v -> {
                 tap(v);
                 sendCtrlKey(KeyEvent.KEYCODE_A, false);
             });
-            btnSecSelAll.setOnLongClickListener(v -> {
+            btnSecSelectAll.setOnLongClickListener(v -> {
                 tap(v);
                 selectCurrentSentence();
                 return true;
@@ -907,6 +976,9 @@ public class WhisperInputMethodService extends InputMethodService {
                 return true;
             });
         }
+        View btnSecRedo    = view.findViewById(R.id.btnSecRedo);
+        View btnSecFwdDel  = view.findViewById(R.id.btnSecForwardDel);
+        View btnSecClear   = view.findViewById(R.id.btnSecClear);
         if (btnSecRedo != null) {
             btnSecRedo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, true); });
         }
@@ -1023,7 +1095,7 @@ public class WhisperInputMethodService extends InputMethodService {
                                 // The moving end is selectionEnd; anchor stays at selectionStart.
                                 // If no selection exists yet, anchor = cursor position as normal.
                                 int anchorPos, cursorPos;
-                                if (shiftActive && et.selectionEnd > et.selectionStart) {
+                                if ((shiftActive || dpadSelectionMode) && et.selectionEnd > et.selectionStart) {
                                     anchorPos = et.selectionStart;
                                     cursorPos = et.selectionEnd;   // drag continues from moving end
                                 } else {
@@ -1083,8 +1155,8 @@ public class WhisperInputMethodService extends InputMethodService {
                         // ── Apply selection or cursor move ─────────────────────────
                         android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
                         if (ic != null) {
-                            if (shiftActive) {
-                                // Shift held: extend selection from the touch-down anchor
+                            if (shiftActive || dpadSelectionMode) {
+                                // Shift held OR d-pad selection mode: extend selection from anchor
                                 ic.setSelection(dpadAnchor[0], offset);
                             } else {
                                 ic.setSelection(offset, offset);
@@ -1116,7 +1188,8 @@ public class WhisperInputMethodService extends InputMethodService {
                                 android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
                                 if (ic != null) {
                                     int meta = 0;
-                                    if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
+                                    // dpadSelectionMode adds SHIFT so arrow keys extend selection
+                                    if (shiftActive || dpadSelectionMode) meta |= KeyEvent.META_SHIFT_ON;
                                     if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
                                     if (altActive)   meta |= KeyEvent.META_ALT_ON;
                                     long t = android.os.SystemClock.uptimeMillis();
@@ -2175,11 +2248,140 @@ public class WhisperInputMethodService extends InputMethodService {
     /**
      * Highlight active modifier buttons (Shift / Ctrl / Alt) so the user can see
      * which modifiers are currently toggled on.  Active = full opacity, inactive = dim.
+     * Also triggers the secondary-layout Shift swap (secondary functions ↔ primary).
      */
     private void updateModifierUI() {
         if (btnSecShift != null) btnSecShift.setAlpha(shiftActive ? 1.0f : 0.55f);
         if (btnSecCtrl  != null) btnSecCtrl.setAlpha(ctrlActive  ? 1.0f : 0.55f);
         if (btnSecAlt   != null) btnSecAlt.setAlpha(altActive    ? 1.0f : 0.55f);
+        updateSecondaryShiftUI();
+    }
+
+    /**
+     * When Shift is active on the secondary layout, swap the tap function and icon
+     * of buttons that have a hint (long-press secondary action) — the secondary
+     * action becomes the primary tap, and the icon swaps accordingly.
+     *
+     * Buttons affected:
+     *   btnSecSelectAll  normal: Ctrl+A  / shift: select sentence
+     *   btnSecUndo       normal: Ctrl+Z  / shift: undo last transcription
+     *   btnSecClear      normal: delete unselected / shift: delete current line
+     *
+     * When shift goes off, everything is restored to normal.
+     */
+    private void updateSecondaryShiftUI() {
+        if (shiftActive) {
+            // ── SelectAll → select current sentence ───────────────────────────
+            if (btnSecSelectAll != null) {
+                btnSecSelectAll.setImageResource(R.drawable.ic_select_sentence_hint);
+                btnSecSelectAll.setOnClickListener(v -> { tap(v); selectCurrentSentence(); });
+                btnSecSelectAll.setOnLongClickListener(v -> {
+                    tap(v); sendCtrlKey(KeyEvent.KEYCODE_A, false); return true;
+                });
+            }
+            if (imgSecSelectAllHint != null)
+                imgSecSelectAllHint.setImageResource(R.drawable.ic_select_all);
+
+            // ── Undo → undo last transcription ────────────────────────────────
+            if (btnSecUndo != null) {
+                btnSecUndo.setImageResource(R.drawable.ic_undo_sentence_hint);
+                btnSecUndo.setOnClickListener(v -> { tap(v); undoLastTranscription(); });
+                btnSecUndo.setOnLongClickListener(v -> {
+                    tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); return true;
+                });
+            }
+            if (imgSecUndoHint != null)
+                imgSecUndoHint.setImageResource(R.drawable.ic_undo_36dp);
+
+            // ── Delete Unselected → delete current line ────────────────────────
+            if (btnSecClearRef != null) {
+                btnSecClearRef.setOnClickListener(v -> { tap(v); deleteCurrentLine(); });
+                btnSecClearRef.setOnLongClickListener(v -> {
+                    // Long press in shift mode: do the "was primary" delete-unselected action.
+                    tap(v);
+                    android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                    if (ic != null) {
+                        CharSequence before = ic.getTextBeforeCursor(10_000, 0);
+                        CharSequence after  = ic.getTextAfterCursor(10_000, 0);
+                        if (before == null) before = "";
+                        if (after  == null) after  = "";
+                        ic.deleteSurroundingText(before.length(), after.length());
+                    }
+                    return true;
+                });
+            }
+            if (imgSecClearHint != null)
+                imgSecClearHint.setImageResource(R.drawable.ic_delete_unselected_hint);
+
+        } else {
+            // ── Restore normal (non-shift) state ──────────────────────────────
+            if (btnSecSelectAll != null) {
+                btnSecSelectAll.setImageResource(R.drawable.ic_select_all);
+                btnSecSelectAll.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_A, false); });
+                btnSecSelectAll.setOnLongClickListener(v -> { tap(v); selectCurrentSentence(); return true; });
+            }
+            if (imgSecSelectAllHint != null)
+                imgSecSelectAllHint.setImageResource(R.drawable.ic_select_sentence_hint);
+
+            if (btnSecUndo != null) {
+                btnSecUndo.setImageResource(R.drawable.ic_undo_36dp);
+                btnSecUndo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
+                btnSecUndo.setOnLongClickListener(v -> { tap(v); undoLastTranscription(); return true; });
+            }
+            if (imgSecUndoHint != null)
+                imgSecUndoHint.setImageResource(R.drawable.ic_undo_sentence_hint);
+
+            if (btnSecClearRef != null) {
+                btnSecClearRef.setOnClickListener(v -> {
+                    tap(v);
+                    android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                    if (ic == null) return;
+                    CharSequence before = ic.getTextBeforeCursor(10_000, 0);
+                    CharSequence after  = ic.getTextAfterCursor(10_000, 0);
+                    if (before == null) before = "";
+                    if (after  == null) after  = "";
+                    ic.deleteSurroundingText(before.length(), after.length());
+                });
+                btnSecClearRef.setOnLongClickListener(v -> { tap(v); deleteCurrentLine(); return true; });
+            }
+            if (imgSecClearHint != null)
+                imgSecClearHint.setImageResource(R.drawable.ic_delete_line_hint);
+        }
+    }
+
+    /**
+     * Update the d-pad image and mode-toggle button to reflect dpadSelectionMode.
+     * Safe to call at any time; no-ops if references are null.
+     */
+    private void updateDpadModeUI() {
+        if (imgDpad != null) {
+            imgDpad.setImageResource(dpadSelectionMode
+                    ? R.drawable.ic_dpad_select
+                    : R.drawable.ic_dpad);
+        }
+        if (btnDpadMode != null) {
+            btnDpadMode.setImageResource(dpadSelectionMode
+                    ? R.drawable.ic_dpad_mode_select
+                    : R.drawable.ic_dpad_mode_cursor);
+        }
+    }
+
+    /**
+     * Update the Cancel button's hint icon alpha to reflect whether "listen on launch"
+     * (prefAutoStart) is currently enabled. Full opacity = on, dimmed = off.
+     */
+    private void updateCancelHint() {
+        if (imgCancelHint == null) return;
+        imgCancelHint.setAlpha(prefAutoStart ? 1.0f : 0.35f);
+    }
+
+    /**
+     * Update the Break Audio button's hint icon alpha to reflect whether streaming
+     * mode (prefAutoStop / continuous VAD) is currently enabled.
+     */
+    private void updateBreakHint() {
+        if (imgBreakAudioHint == null) return;
+        imgBreakAudioHint.setAlpha(prefAutoStop ? 1.0f : 0.35f);
     }
 
     private void breakAudioAndContinue() {
@@ -2477,6 +2679,8 @@ public class WhisperInputMethodService extends InputMethodService {
             // Switching back to primary — restore audio if it was running.
             // Reset modifier keys: they don't make sense to carry across layout switches.
             shiftActive = false; ctrlActive = false; altActive = false;
+            dpadSelectionMode = false;
+            updateDpadModeUI();
             updateModifierUI();
             layoutSecondary.setVisibility(View.GONE);
             layoutPrimary.setVisibility(View.VISIBLE);
@@ -2673,6 +2877,9 @@ public class WhisperInputMethodService extends InputMethodService {
         updateCapsIcon();
         updateModifierUI();
         updateLockIcon();
+        updateDpadModeUI();
+        updateCancelHint();
+        updateBreakHint();
         if (isListening) {
             setCancelEnabled(true);
             setMicState(isRecording ? MicState.RECORDING : MicState.LISTENING);
