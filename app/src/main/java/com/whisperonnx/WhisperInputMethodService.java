@@ -217,6 +217,11 @@ public class WhisperInputMethodService extends InputMethodService {
      * This prevents the pattern: cancel → send → keyboard re-shown → auto-records.
      */
     private boolean suppressNextAutoStart = false;
+    /** Pending auto-start runnable — cancelled by onFinishInputView to absorb
+     * the transient show/hide/show cycle Android sends after Activity dismissal. */
+    private Runnable pendingAutoStart = null;
+    /** Minimum interval between successive auto-starts (ms). Prevents double-fire. */
+    private static final long AUTO_START_DEBOUNCE_MS = 350L;
     /** Package name + field ID at the time suppressNextAutoStart was set. */
     private String  suppressedForEditor   = "";
     /** Uptime when suppression was set — expires after SUPPRESS_TIMEOUT_MS. */
@@ -442,20 +447,33 @@ public class WhisperInputMethodService extends InputMethodService {
         }
 
         if (prefAutoStart && !isListening) {
-            String editorKey = currentEditorKey(attribute);
-            long suppressAge = android.os.SystemClock.uptimeMillis() - suppressSetAt;
+            final String editorKey = currentEditorKey(attribute);
+            final long suppressAge = android.os.SystemClock.uptimeMillis() - suppressSetAt;
+            // Cancel any pending auto-start from a previous (possibly phantom) show.
+            if (pendingAutoStart != null) {
+                handler.removeCallbacks(pendingAutoStart);
+                pendingAutoStart = null;
+            }
             if (suppressNextAutoStart
                     && suppressedForEditor.equals(editorKey)
                     && suppressAge < SUPPRESS_TIMEOUT_MS) {
                 // Same editor, within the suppression window after an explicit cancel/stop.
-                // User deliberately stopped — don't auto-start. They can tap mic when ready.
                 suppressNextAutoStart = false;
                 if (Log.isLoggable(TAG, Log.DEBUG))
                     Log.d(TAG, "Auto-start suppressed (age=" + suppressAge + "ms)");
             } else {
-                // Different editor, or suppression expired, or never set — auto-start.
                 suppressNextAutoStart = false;
-                startRecordingSession(prefAutoStop);
+                // Defer auto-start by AUTO_START_DEBOUNCE_MS.
+                // Android sometimes sends a rapid onStartInputView → onFinishInputView →
+                // onStartInputView triple when returning from an Activity (e.g. Settings).
+                // The first show is a phantom — onFinishInputView fires within ~200ms and
+                // cancels this runnable, preventing a double record session start.
+                // The second (real) show schedules its own runnable which actually fires.
+                pendingAutoStart = () -> {
+                    pendingAutoStart = null;
+                    if (!isListening) startRecordingSession(prefAutoStop);
+                };
+                handler.postDelayed(pendingAutoStart, AUTO_START_DEBOUNCE_MS);
             }
         }
     }
@@ -480,6 +498,8 @@ public class WhisperInputMethodService extends InputMethodService {
         if (fwdDelFast    != null) { handler.removeCallbacks(fwdDelFast);    fwdDelFast    = null; }
         if (enterInitial  != null) { handler.removeCallbacks(enterInitial);  enterInitial  = null; }
         if (enterFast     != null) { handler.removeCallbacks(enterFast);     enterFast     = null; }
+        // Cancel any pending auto-start (absorbs the phantom show/hide/show cycle).
+        if (pendingAutoStart != null) { handler.removeCallbacks(pendingAutoStart); pendingAutoStart = null; }
         // Dismiss any open popups when keyboard hides
         if (punctuationPopup != null) { punctuationPopup.dismiss(); punctuationPopup = null; punctuationVisible = false; }
         if (keyboardPopup    != null) { keyboardPopup.dismiss();    keyboardPopup    = null; }
@@ -1396,6 +1416,16 @@ public class WhisperInputMethodService extends InputMethodService {
                     final byte[] capturedAudio = RecordBuffer.getOutputBuffer();
                     handler.post(() -> {
                         if (sessionGen != sid || cancelRequested) return;
+                        // Discard button was pressed while this segment was recording —
+                        // audioQueue.clear() was already called in discardAudioAndContinue(),
+                        // but the MSG_RECORDING_DONE callback captures audio before the
+                        // handler.post runs, so the audio would be re-added. Detect this
+                        // here (on the main thread where discardRequested was set) and drop it.
+                        if (discardRequested) {
+                            discardRequested = false;
+                            resetProgressUi();
+                            return;
+                        }
                         // Queue and transcribe — AudioRecord keeps running, no restart needed
                         audioQueue.offer(capturedAudio);
                         processNextQueued();
@@ -2353,17 +2383,23 @@ public class WhisperInputMethodService extends InputMethodService {
                 break;
             }
         }
-        if (!anyContent) allHave = false;  // all lines empty -> add prefixes
-        boolean removing = allHave;
+        // If the block is entirely empty lines, treat as "add" (the button was pressed
+        // on a blank line — the user wants to start a bullet list there).
+        boolean removing = anyContent && allHave;
 
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < lines.length; i++) {
             if (i > 0) sb.append('\n');
-            if (lines[i].isEmpty()) {
-                sb.append(lines[i]);
-            } else if (removing) {
-                sb.append(lines[i].substring(2));
+            if (removing) {
+                // Remove the "- " or "* " prefix; leave truly empty lines alone.
+                if (lines[i].startsWith("- ") || lines[i].startsWith("* ")) {
+                    sb.append(lines[i].substring(2));
+                } else {
+                    sb.append(lines[i]);
+                }
             } else {
+                // Add "- " prefix to every line (including empty lines — the user
+                // tapped bullet on a blank line and expects to start typing a bullet).
                 sb.append("- ").append(lines[i]);
             }
         }
@@ -2397,18 +2433,18 @@ public class WhisperInputMethodService extends InputMethodService {
         for (int i = 0; i < lines.length; i++) {
             int lineEnd = cursor + lines[i].length();
             if (pos <= cursor) break;  // pos is before this line — done
-            if (!lines[i].isEmpty()) {
-                if (removing) {
-                    // Subtract up to 2 chars, but not more than pos is past cursor
-                    // (so if pos landed inside the removed "- " prefix, it clamps
-                    // to the new start-of-line rather than going negative).
+            if (removing) {
+                if (lines[i].startsWith("- ") || lines[i].startsWith("* ")) {
+                    // Subtract up to 2 chars, clamped so cursor doesn't go before line start.
                     int maxRemove = Math.min(pos - cursor, 2);
                     shift -= maxRemove;
-                } else {
-                    shift += 2;  // "- " added
                 }
+                // else: no prefix to remove, no shift
+            } else {
+                // "- " added to every line (including empty ones)
+                shift += 2;
             }
-            cursor = lineEnd + 1;  // account for the \n
+            cursor = lineEnd + 1;  // account for the \n separator
         }
         return pos + shift;
     }

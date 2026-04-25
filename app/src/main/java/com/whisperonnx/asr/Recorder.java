@@ -267,7 +267,14 @@ public class Recorder {
                 shouldOpen        = !streamShouldClose;
                 streamShouldClose = false;
             } finally {
-                streamLock.unlock(); // exactly one unlock, always
+                // Defensive guard: unlock only if we actually hold the lock.
+                // Under certain Android Condition.await() / interrupt races the
+                // lock might not be held here, which caused IllegalMonitorStateException
+                // crashes in earlier builds. isHeldByCurrentThread() is thread-safe
+                // and prevents the crash without masking any real double-unlock.
+                if (streamLock.isHeldByCurrentThread()) {
+                    streamLock.unlock();
+                }
             }
             if (!shouldOpen) continue; // skip AudioRecord open safely — lock already released
 
