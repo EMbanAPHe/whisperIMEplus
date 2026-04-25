@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="13dp" android:height="13dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Mic body (same as ON, but dimmer context — icon shown at lower alpha) -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M12,2 C10.3,2 9,3.3 9,5 L9,11 C9,12.7 10.3,14 12,14 C13.7,14 15,12.7 15,11 L15,5 C15,3.3 13.7,2 12,2 Z"/>
+    <!-- Mic stand arc + pole -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M17,11 C17,13.8 14.8,16 12,16 C9.2,16 7,13.8 7,11 L5.5,11 C5.5,14.4 7.9,17.2 11,17.9 L11,20 L9.5,20 L9.5,21.5 L14.5,21.5 L14.5,20 L13,20 L13,17.9 C16.1,17.2 18.5,14.4 18.5,11 Z"/>
+    <!-- Pause bars (two rectangles) in bottom-right corner -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M17,17 L19,17 L19,23 L17,23 Z M20.5,17 L22.5,17 L22.5,23 L20.5,23 Z"/>
+</vector>

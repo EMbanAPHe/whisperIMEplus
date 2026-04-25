@@ -2,17 +2,48 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="36dp" android:height="36dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <!-- Filled solid arrows — visual inversion of the outline chevrons in ic_dpad.xml -->
-    <!-- Up arrow -->
-    <path android:fillColor="#FFFFFF"
-          android:pathData="M12,1.5 L9.5,5.5 L14.5,5.5 Z"/>
-    <!-- Down arrow -->
-    <path android:fillColor="#FFFFFF"
-          android:pathData="M12,22.5 L9.5,18.5 L14.5,18.5 Z"/>
-    <!-- Left arrow -->
-    <path android:fillColor="#FFFFFF"
-          android:pathData="M1.5,12 L5.5,9.5 L5.5,14.5 Z"/>
-    <!-- Right arrow -->
-    <path android:fillColor="#FFFFFF"
-          android:pathData="M22.5,12 L18.5,9.5 L18.5,14.5 Z"/>
+
+    <!--
+        Inward-pointing chevrons: same stroke weight and positions as ic_dpad.xml,
+        but each chevron is FLIPPED so its tip points toward the centre (12,12)
+        rather than away from it. This "grip" appearance communicates that the
+        d-pad is now anchoring and extending a selection.
+
+        ic_dpad outward chevrons (for reference):
+          Up:    tip y=1.5  base y=5.5   →  ^ shape at top
+          Down:  tip y=22.5 base y=18.5  →  v shape at bottom
+          Left:  tip x=1.5  base x=5.5   →  < shape at left
+          Right: tip x=22.5 base x=18.5  →  > shape at right
+
+        Inward (flipped): base stays at outer edge, tip moves to inner edge:
+          Up:    base y=1.5  tip y=5.5   →  v shape at top  (tip toward centre)
+          Down:  base y=22.5 tip y=18.5  →  ^ shape at bottom (tip toward centre)
+          Left:  base x=1.5  tip x=5.5   →  > shape at left  (tip toward centre)
+          Right: base x=22.5 tip x=18.5  →  < shape at right (tip toward centre)
+    -->
+
+    <!-- Up: v pointing down (inward) at top of viewport -->
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
+          android:strokeLineCap="round" android:strokeLineJoin="round"
+          android:pathData="M9.5,1.5 L12,5.5 L14.5,1.5"/>
+
+    <!-- Down: ^ pointing up (inward) at bottom of viewport -->
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
+          android:strokeLineCap="round" android:strokeLineJoin="round"
+          android:pathData="M9.5,22.5 L12,18.5 L14.5,22.5"/>
+
+    <!-- Left: > pointing right (inward) at left of viewport -->
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
+          android:strokeLineCap="round" android:strokeLineJoin="round"
+          android:pathData="M1.5,9.5 L5.5,12 L1.5,14.5"/>
+
+    <!-- Right: < pointing left (inward) at right of viewport -->
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#88FFFFFF" android:strokeWidth="1.0"
+          android:strokeLineCap="round" android:strokeLineJoin="round"
+          android:pathData="M22.5,9.5 L18.5,12 L22.5,14.5"/>
+
 </vector>

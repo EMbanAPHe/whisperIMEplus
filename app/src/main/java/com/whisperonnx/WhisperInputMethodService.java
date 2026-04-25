@@ -902,20 +902,26 @@ public class WhisperInputMethodService extends InputMethodService {
         btnSecClearRef       = view.findViewById(R.id.btnSecClear);
 
         // ── Cancel long press: toggle "listen on launch" (prefAutoStart) ────────
-        if (btnCancel != null) {
-            btnCancel.setOnLongClickListener(v -> {
+        // Long-press must be on the PARENT FrameLayout (wrapperCancel), not on the
+        // child TextView (btnCancel) which is often disabled (alpha=0.4, enabled=false)
+        // and therefore does not receive touch events in Android when enabled=false.
+        View wrapperCancel = view.findViewById(R.id.wrapperCancel);
+        if (wrapperCancel != null) {
+            wrapperCancel.setOnLongClickListener(v -> {
                 tap(v);
                 prefAutoStart = !prefAutoStart;
                 sp.edit().putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, prefAutoStart).apply();
                 updateCancelHint();
                 return true;
             });
-            updateCancelHint();
         }
+        updateCancelHint();
 
         // ── Break Audio long press: toggle streaming mode (prefAutoStop) ────────
-        if (btnBreakAudio != null) {
-            btnBreakAudio.setOnLongClickListener(v -> {
+        // Same pattern: long-press on parent FrameLayout (wrapperBreakAudio).
+        View wrapperBreakAudio = view.findViewById(R.id.wrapperBreakAudio);
+        if (wrapperBreakAudio != null) {
+            wrapperBreakAudio.setOnLongClickListener(v -> {
                 tap(v);
                 prefAutoStop = !prefAutoStop;
                 sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
@@ -923,8 +929,8 @@ public class WhisperInputMethodService extends InputMethodService {
                 updateBreakHint();
                 return true;
             });
-            updateBreakHint();
         }
+        updateBreakHint();
 
         // ── D-pad mode toggle button ──────────────────────────────────────────
         btnDpadMode = view.findViewById(R.id.btnDpadMode);
@@ -1189,10 +1195,12 @@ public class WhisperInputMethodService extends InputMethodService {
                                 android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
                                 if (ic != null) {
                                     int meta = 0;
-                                    // dpadSelectionMode adds SHIFT so arrow keys extend selection
-                                    if (shiftActive || dpadSelectionMode) meta |= KeyEvent.META_SHIFT_ON;
-                                    if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
-                                    if (altActive)   meta |= KeyEvent.META_ALT_ON;
+                                    // SHIFT only from the Shift modifier button — dpadSelectionMode
+                                    // extends selection via drag (setSelection), NOT via key meta flags.
+                                    // Sending SHIFT+DPAD would jump by word/paragraph in many apps.
+                                    if (shiftActive)  meta |= KeyEvent.META_SHIFT_ON;
+                                    if (ctrlActive)   meta |= KeyEvent.META_CTRL_ON;
+                                    if (altActive)    meta |= KeyEvent.META_ALT_ON;
                                     long t = android.os.SystemClock.uptimeMillis();
                                     ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
                                     ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
@@ -2275,6 +2283,9 @@ public class WhisperInputMethodService extends InputMethodService {
             // ── SelectAll → select current sentence ───────────────────────────
             if (btnSecSelectAll != null) {
                 btnSecSelectAll.setImageResource(R.drawable.ic_select_sentence_hint);
+                // Hint icons have 13dp intrinsic size; fitCenter scales them up to fill.
+                // The normal centerInside only scales DOWN, leaving hint icons tiny.
+                btnSecSelectAll.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 btnSecSelectAll.setOnClickListener(v -> { tap(v); selectCurrentSentence(); });
                 btnSecSelectAll.setOnLongClickListener(v -> {
                     tap(v); sendCtrlKey(KeyEvent.KEYCODE_A, false); return true;
@@ -2286,6 +2297,7 @@ public class WhisperInputMethodService extends InputMethodService {
             // ── Undo → undo last transcription ────────────────────────────────
             if (btnSecUndo != null) {
                 btnSecUndo.setImageResource(R.drawable.ic_undo_sentence_hint);
+                btnSecUndo.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 btnSecUndo.setOnClickListener(v -> { tap(v); undoLastTranscription(); });
                 btnSecUndo.setOnLongClickListener(v -> {
                     tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); return true;
@@ -2318,6 +2330,7 @@ public class WhisperInputMethodService extends InputMethodService {
             // ── Restore normal (non-shift) state ──────────────────────────────
             if (btnSecSelectAll != null) {
                 btnSecSelectAll.setImageResource(R.drawable.ic_select_all);
+                btnSecSelectAll.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
                 btnSecSelectAll.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_A, false); });
                 btnSecSelectAll.setOnLongClickListener(v -> { tap(v); selectCurrentSentence(); return true; });
             }
@@ -2326,6 +2339,7 @@ public class WhisperInputMethodService extends InputMethodService {
 
             if (btnSecUndo != null) {
                 btnSecUndo.setImageResource(R.drawable.ic_undo_36dp);
+                btnSecUndo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
                 btnSecUndo.setOnClickListener(v -> { tap(v); sendCtrlKey(KeyEvent.KEYCODE_Z, false); });
                 btnSecUndo.setOnLongClickListener(v -> { tap(v); undoLastTranscription(); return true; });
             }
@@ -2368,21 +2382,26 @@ public class WhisperInputMethodService extends InputMethodService {
     }
 
     /**
-     * Update the Cancel button's hint icon alpha to reflect whether "listen on launch"
-     * (prefAutoStart) is currently enabled. Full opacity = on, dimmed = off.
+     * Update the Cancel button's hint icon to show whether "listen on launch"
+     * (prefAutoStart) is on or off. Uses distinct icons rather than just alpha so
+     * the state is unambiguous even at a glance.
      */
     private void updateCancelHint() {
         if (imgCancelHint == null) return;
-        imgCancelHint.setAlpha(prefAutoStart ? 1.0f : 0.35f);
+        imgCancelHint.setImageResource(prefAutoStart
+                ? R.drawable.ic_autostart_on_hint
+                : R.drawable.ic_autostart_off_hint);
     }
 
     /**
-     * Update the Break Audio button's hint icon alpha to reflect whether streaming
-     * mode (prefAutoStop / continuous VAD) is currently enabled.
+     * Update the Break Audio button's hint icon to show whether streaming mode
+     * (prefAutoStop / continuous VAD) is on or off.
      */
     private void updateBreakHint() {
         if (imgBreakAudioHint == null) return;
-        imgBreakAudioHint.setAlpha(prefAutoStop ? 1.0f : 0.35f);
+        imgBreakAudioHint.setImageResource(prefAutoStop
+                ? R.drawable.ic_streaming_on_hint
+                : R.drawable.ic_streaming_off_hint);
     }
 
     private void breakAudioAndContinue() {
@@ -2673,6 +2692,9 @@ public class WhisperInputMethodService extends InputMethodService {
             // Switching to secondary — snapshot state and pause audio
             wasListeningBeforeSecondary = isListening;
             if (isListening) exitListeningMode(true);
+            // Clear any in-progress transcription indicator — it would be stuck
+            // because we won't receive further MSG callbacks while secondary is shown.
+            resetProgressUi();
             layoutPrimary.setVisibility(View.GONE);
             layoutSecondary.setVisibility(View.VISIBLE);
             updateSecondaryLabels();

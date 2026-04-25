@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="13dp" android:height="13dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Single right-pointing arrow: one shot, not continuous (streaming OFF) -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M4,11 L18,11 L18,8 L23,12 L18,16 L18,13 L4,13 Z"/>
+    <!-- Small stop bar on the left indicating it won't loop back -->
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M1,8 L3,8 L3,16 L1,16 Z"/>
+</vector>

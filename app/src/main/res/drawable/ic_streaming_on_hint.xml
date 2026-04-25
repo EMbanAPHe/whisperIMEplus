@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="13dp" android:height="13dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Loop arrows (two arcs forming a cycle) indicating continuous streaming is ON -->
+    <!-- Top arc with right arrowhead -->
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#FFFFFF" android:strokeWidth="2.5"
+          android:strokeLineCap="round"
+          android:pathData="M4,12 A8,8 0 0,1 20,12"/>
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M18,8 L24,12 L18,16 Z"/>
+    <!-- Bottom arc with left arrowhead -->
+    <path android:fillColor="@android:color/transparent"
+          android:strokeColor="#FFFFFF" android:strokeWidth="2.5"
+          android:strokeLineCap="round"
+          android:pathData="M20,12 A8,8 0 0,1 4,12"/>
+    <path android:fillColor="#FFFFFF"
+          android:pathData="M6,8 L0,12 L6,16 Z"/>
+</vector>
