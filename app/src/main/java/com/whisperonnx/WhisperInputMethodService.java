@@ -877,7 +877,21 @@ public class WhisperInputMethodService extends InputMethodService {
 
         // ── Modifier keys (Shift / Ctrl / Alt) ──────────────────────────────
         if (btnSecShift != null) btnSecShift.setOnClickListener(v -> {
-            tap(v); shiftActive = !shiftActive; updateModifierUI();
+            tap(v);
+            shiftActive = !shiftActive;
+            updateModifierUI();
+            // When shift turns OFF, collapse any selection to the cursor (selectionEnd).
+            // This matches standard keyboard behaviour: releasing Shift ends text selection.
+            if (!shiftActive) {
+                android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                if (ic != null) {
+                    android.view.inputmethod.ExtractedText et =
+                            ic.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                    if (et != null && et.selectionStart != et.selectionEnd) {
+                        ic.setSelection(et.selectionEnd, et.selectionEnd);
+                    }
+                }
+            }
         });
         if (btnSecCtrl != null) btnSecCtrl.setOnClickListener(v -> {
             tap(v); ctrlActive = !ctrlActive; updateModifierUI();
@@ -952,6 +966,17 @@ public class WhisperInputMethodService extends InputMethodService {
                 tap(v);
                 dpadSelectionMode = !dpadSelectionMode;
                 updateDpadModeUI();
+                // Turning selection mode OFF: collapse any selection to cursor.
+                if (!dpadSelectionMode) {
+                    android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
+                    if (ic != null) {
+                        android.view.inputmethod.ExtractedText et =
+                                ic.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                        if (et != null && et.selectionStart != et.selectionEnd) {
+                            ic.setSelection(et.selectionEnd, et.selectionEnd);
+                        }
+                    }
+                }
             });
         }
 
@@ -1056,75 +1081,80 @@ public class WhisperInputMethodService extends InputMethodService {
         }
 
 
-        // ── D-pad — hybrid touch handler ──────────────────────────────────────
-        // NORMAL MODE (dpadSelectionMode=false, shiftActive=false):
-        //   Drag  → incremental DPAD key events (no SHIFT), delta from previous event.
-        //           The app handles visual-line navigation, wrapped text, proportional
-        //           fonts. We just send one key per H/V step.
-        //   Tap   → single DPAD key event.
+        // ── D-pad — pure setSelection (no sendKeyEvent) ─────────────────────
+        // sendKeyEvent(DPAD_*) causes many apps to call InputMethodManager.restartInput()
+        // which triggers onFinishInputView → isSecondaryLayout reset → back to primary.
+        // setSelection() bypasses all key dispatch and is safe to call from an IME at
+        // any time without triggering keyboard restart cycles.
         //
-        // SELECTION MODE (dpadSelectionMode=true OR shiftActive=true):
-        //   Drag  → ic.setSelection(anchor, computedOffset), delta measured from
-        //           touch-down so the selection tracks the drag gesture absolutely.
-        //           sendKeyEvent(SHIFT+DPAD) is NOT reliable for selection in modern
-        //           Android IME — custom text views (Signal etc.) bypass that path.
-        //   Tap L/R → ic.setSelection(anchor, end±1) — guaranteed single char step.
-        //   Tap U/D → SHIFT+DPAD key event — only viable path for visual-line step.
+        // Movement model (both cursor and selection modes):
+        //   At ACTION_DOWN: snapshot the full text + record the current MOVING END
+        //   (cursor in cursor-mode, selectionEnd in selection-mode) as anchLine/anchCol.
+        //   At ACTION_MOVE: compute (anchLine+lOff, anchCol+cOff) from drag delta vs
+        //   view dimensions, convert to absolute offset, call setSelection.
+        //     Cursor mode:    setSelection(newPos, newPos)      — moves cursor
+        //     Selection mode: setSelection(fixedAnchor, newPos) — extends selection
+        //   At ACTION_UP (tap): navigate one step using line/column arithmetic on
+        //   the snapshot text, so up/down cross logical newline boundaries.
+        //
+        // Sensitivity: full view sweep (−1.0→+1.0) = ±30 chars horizontal, ±10 lines.
+        // These are view-relative so they scale automatically with screen size.
         if (btnDpad != null) {
-            final android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-            final float H_KEY_STEP = 10f * dm.density;
-            final float V_KEY_STEP = 22f * dm.density;
-            final float TAP_SLOP   =  8f * dm.density;
+            final float TAP_SLOP_DP = 8f * getResources().getDisplayMetrics().density;
 
-            final float[]   prevKX   = {0f};
-            final float[]   prevKY   = {0f};
-            final float[]   accumKX  = {0f};
-            final float[]   accumKY  = {0f};
+            // All mutable state in single-element arrays for lambda capture
             final float[]   downX    = {0f};
             final float[]   downY    = {0f};
-            final int[]     anchor   = {-1};
-            final int[]     anchLine = {0};
-            final int[]     anchCol  = {0};
+            final int[]     fixedEnd = {0};   // selection anchor (stays fixed throughout drag)
+            final int[]     anchLine = {0};   // line of the moving end at touch-down
+            final int[]     anchCol  = {0};   // col  of the moving end at touch-down
             final String[]  snapTxt  = {""};
             final int[]     snapLen  = {0};
             final boolean[] dragged  = {false};
 
             btnDpad.setOnTouchListener((v, ev) -> {
-                float x = ev.getX(), y = ev.getY();
-                float vW = v.getWidth(), vH = v.getHeight();
+                final float x  = ev.getX(), y = ev.getY();
+                final float vW = v.getWidth(), vH = v.getHeight();
 
                 switch (ev.getAction()) {
 
                     case MotionEvent.ACTION_DOWN: {
                         dragged[0] = false;
                         downX[0] = x; downY[0] = y;
-                        prevKX[0] = x; prevKY[0] = y;
-                        accumKX[0] = 0f; accumKY[0] = 0f;
-                        if (dpadSelectionMode || shiftActive) {
-                            android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
-                            if (ic2 != null) {
-                                android.view.inputmethod.ExtractedText et =
-                                        ic2.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
-                                if (et != null && et.text != null) {
-                                    String txt = et.text.toString();
-                                    snapTxt[0] = txt; snapLen[0] = txt.length();
-                                    // anchor[0] = FIXED end (selectionStart) — never moves.
-                                    // anchLine/anchCol = position of the MOVING end (selectionEnd).
-                                    // When re-dragging after lifting, the initial offset computed
-                                    // with dx=0/dy=0 equals selectionEnd, so the existing selection
-                                    // is preserved rather than collapsed back to selectionStart.
-                                    anchor[0] = et.selectionStart;
-                                    int movingEnd = et.selectionEnd;
-                                    String[] ls = txt.split("\n", -1);
-                                    int pos = 0;
-                                    for (int li = 0; li < ls.length; li++) {
-                                        int le = pos + ls[li].length();
-                                        if (movingEnd <= le || li == ls.length - 1) {
-                                            anchLine[0] = li; anchCol[0] = movingEnd - pos; break;
-                                        }
-                                        pos += ls[li].length() + 1;
+
+                        // Always snapshot — needed for both cursor and selection moves.
+                        android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
+                        if (ic2 != null) {
+                            android.view.inputmethod.ExtractedText et =
+                                ic2.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                            if (et != null && et.text != null) {
+                                String txt = et.text.toString();
+                                snapTxt[0] = txt; snapLen[0] = txt.length();
+
+                                // fixedEnd = the end that stays put while the user drags.
+                                //   Cursor mode:    fixedEnd = selectionStart (= selectionEnd = cursor pos)
+                                //   Selection mode: fixedEnd = selectionStart (the anchor)
+                                fixedEnd[0] = et.selectionStart;
+
+                                // anchLine/anchCol = position of the MOVING end.
+                                //   Cursor mode:    moving end = cursor = selectionStart
+                                //   Selection mode: moving end = selectionEnd
+                                // When re-dragging, using selectionEnd (not selectionStart) as the
+                                // base means the initial target is selectionEnd → selection preserved.
+                                int movingPos = (dpadSelectionMode || shiftActive)
+                                        ? et.selectionEnd : et.selectionStart;
+
+                                String[] ls = txt.split("\n", -1);
+                                int pos = 0;
+                                for (int li = 0; li < ls.length; li++) {
+                                    int le = pos + ls[li].length();
+                                    if (movingPos <= le || li == ls.length - 1) {
+                                        anchLine[0] = li; anchCol[0] = movingPos - pos; break;
                                     }
-                                } else { anchor[0] = -1; snapTxt[0] = ""; }
+                                    pos += ls[li].length() + 1;
+                                }
+                            } else {
+                                snapTxt[0] = ""; snapLen[0] = 0; fixedEnd[0] = 0;
                             }
                         }
                         break;
@@ -1132,110 +1162,94 @@ public class WhisperInputMethodService extends InputMethodService {
 
                     case MotionEvent.ACTION_MOVE: {
                         float dx = x - downX[0], dy = y - downY[0];
-                        if (!dragged[0] && (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP))
+                        if (!dragged[0] && (Math.abs(dx) > TAP_SLOP_DP || Math.abs(dy) > TAP_SLOP_DP))
                             dragged[0] = true;
-                        if (!dragged[0]) break;
+                        if (!dragged[0] || snapTxt[0].isEmpty()) break;
+
+                        // Map drag fraction → character/line offset from the moving end.
+                        // Full sweep of the view = ±30 chars horizontally, ±10 lines vertically.
+                        int cOff = (int)((dx / vW) * 30f);
+                        int lOff = (int)((dy / vH) * 10f);
+
+                        String[] ls = snapTxt[0].split("\n", -1);
+                        int tl = Math.max(0, Math.min(ls.length - 1, anchLine[0] + lOff));
+                        int tc = Math.max(0, Math.min(ls[tl].length(), anchCol[0] + cOff));
+                        int off = 0;
+                        for (int li = 0; li < tl; li++) off += ls[li].length() + 1;
+                        off = Math.max(0, Math.min(snapLen[0], off + tc));
 
                         android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
                         if (ic2 == null) break;
 
                         if (dpadSelectionMode || shiftActive) {
-                            // Selection drag: absolute setSelection from anchor
-                            if (anchor[0] < 0 || snapTxt[0].isEmpty()) break;
-                            float fracH = vW > 0 ? dx / vW : 0f;
-                            float fracV = vH > 0 ? dy / vH : 0f;
-                            int cOff = (int)(fracH * 30f);
-                            int lOff = (int)(fracV * 10f);
-                            String[] ls = snapTxt[0].split("\n", -1);
-                            int tl = Math.max(0, Math.min(ls.length - 1, anchLine[0] + lOff));
-                            int tc = Math.max(0, Math.min(ls[tl].length(), anchCol[0] + cOff));
-                            int off = 0;
-                            for (int li = 0; li < tl; li++) off += ls[li].length() + 1;
-                            off = Math.max(0, Math.min(snapLen[0], off + tc));
-                            ic2.setSelection(anchor[0], off);
-                            v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                            if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-
+                            ic2.setSelection(fixedEnd[0], off);  // extend selection
                         } else {
-                            // Cursor drag: incremental key events from previous position
-                            float dxi = x - prevKX[0], dyi = y - prevKY[0];
-                            prevKX[0] = x; prevKY[0] = y;
-                            accumKX[0] += dxi; accumKY[0] += dyi;
-                            while (accumKX[0] <= -H_KEY_STEP) {
-                                accumKX[0] += H_KEY_STEP;
-                                long t = android.os.SystemClock.uptimeMillis();
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_LEFT,0,0));
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_LEFT,0,0));
-                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                            }
-                            while (accumKX[0] >= H_KEY_STEP) {
-                                accumKX[0] -= H_KEY_STEP;
-                                long t = android.os.SystemClock.uptimeMillis();
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT,0,0));
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_RIGHT,0,0));
-                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                            }
-                            while (accumKY[0] <= -V_KEY_STEP) {
-                                accumKY[0] += V_KEY_STEP;
-                                long t = android.os.SystemClock.uptimeMillis();
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_UP,0,0));
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_UP,0,0));
-                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                            }
-                            while (accumKY[0] >= V_KEY_STEP) {
-                                accumKY[0] -= V_KEY_STEP;
-                                long t = android.os.SystemClock.uptimeMillis();
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_DOWN,0,0));
-                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_DOWN,0,0));
-                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                            }
+                            ic2.setSelection(off, off);           // move cursor
                         }
+                        v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
+                                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                        if (mRecorder != null) mRecorder.suppressVadTrigger(200);
                         break;
                     }
 
                     case MotionEvent.ACTION_UP: {
-                        accumKX[0] = 0f; accumKY[0] = 0f;
                         if (!dragged[0]) {
-                            float relX = vW > 0 ? x/vW : 0.5f, relY = vH > 0 ? y/vH : 0.5f;
-                            int kc = 0;
-                            if      (relY < 0.28f) kc = KeyEvent.KEYCODE_DPAD_UP;
-                            else if (relY > 0.72f) kc = KeyEvent.KEYCODE_DPAD_DOWN;
-                            else if (relX < 0.28f) kc = KeyEvent.KEYCODE_DPAD_LEFT;
-                            else if (relX > 0.72f) kc = KeyEvent.KEYCODE_DPAD_RIGHT;
-                            if (kc != 0) {
+                            // ── Tap: navigate one step in the tapped direction ────────
+                            float relX = vW > 0 ? x/vW : 0.5f;
+                            float relY = vH > 0 ? y/vH : 0.5f;
+                            int dir = 0; // 0=none,1=up,2=down,3=left,4=right
+                            if      (relY < 0.28f) dir = 1;
+                            else if (relY > 0.72f) dir = 2;
+                            else if (relX < 0.28f) dir = 3;
+                            else if (relX > 0.72f) dir = 4;
+
+                            if (dir != 0 && !snapTxt[0].isEmpty()) {
                                 tap(v);
                                 android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
-                                if (ic2 != null) {
-                                    if (dpadSelectionMode || shiftActive) {
-                                        if (kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                                            android.view.inputmethod.ExtractedText et =
-                                                    ic2.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
-                                            if (et != null && et.text != null) {
-                                                int newEnd = kc == KeyEvent.KEYCODE_DPAD_LEFT
-                                                        ? Math.max(0, et.selectionEnd - 1)
-                                                        : Math.min(et.text.length(), et.selectionEnd + 1);
-                                                ic2.setSelection(et.selectionStart, newEnd);
-                                            }
-                                        } else {
-                                            int meta = KeyEvent.META_SHIFT_ON;
-                                            if (ctrlActive) meta |= KeyEvent.META_CTRL_ON;
-                                            long t = android.os.SystemClock.uptimeMillis();
-                                            ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,kc,0,meta));
-                                            ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  kc,0,meta));
-                                        }
+                                android.view.inputmethod.ExtractedText et = ic2 == null ? null :
+                                        ic2.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                                if (ic2 != null && et != null && et.text != null) {
+                                    String txt = et.text.toString();
+                                    int len    = txt.length();
+                                    // In selection mode: fixedAnchor = selectionStart, movingPos = selectionEnd
+                                    // In cursor mode: both are cursor position
+                                    int curFixed  = (dpadSelectionMode || shiftActive)
+                                            ? et.selectionStart : et.selectionEnd;
+                                    int curMoving = et.selectionEnd;
+
+                                    int newMoving = curMoving;
+                                    if (dir == 3) {          // LEFT  — one char back
+                                        newMoving = Math.max(0, curMoving - 1);
+                                    } else if (dir == 4) {   // RIGHT — one char forward
+                                        newMoving = Math.min(len, curMoving + 1);
                                     } else {
-                                        int meta = 0;
-                                        if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
-                                        if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
-                                        if (altActive)   meta |= KeyEvent.META_ALT_ON;
-                                        long t = android.os.SystemClock.uptimeMillis();
-                                        ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,kc,0,meta));
-                                        ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  kc,0,meta));
+                                        // UP / DOWN — navigate logical lines using \n chars.
+                                        // Find the line and column of curMoving.
+                                        int lineStart = txt.lastIndexOf('\n', curMoving - 1) + 1;
+                                        int col = curMoving - lineStart;
+                                        if (dir == 1) {      // UP
+                                            if (lineStart == 0) { newMoving = 0; }
+                                            else {
+                                                int prevEnd   = lineStart - 1; // the \n
+                                                int prevStart = txt.lastIndexOf('\n', prevEnd - 1) + 1;
+                                                newMoving = Math.min(prevStart + col, prevEnd);
+                                            }
+                                        } else {             // DOWN (dir==2)
+                                            int lineEnd = txt.indexOf('\n', curMoving);
+                                            if (lineEnd == -1) { newMoving = len; }
+                                            else {
+                                                int nextStart = lineEnd + 1;
+                                                int nextEnd   = txt.indexOf('\n', nextStart);
+                                                if (nextEnd == -1) nextEnd = len;
+                                                newMoving = Math.min(nextStart + col, nextEnd);
+                                            }
+                                        }
+                                    }
+
+                                    if (dpadSelectionMode || shiftActive) {
+                                        ic2.setSelection(curFixed, newMoving);
+                                    } else {
+                                        ic2.setSelection(newMoving, newMoving);
                                     }
                                 }
                             }
@@ -1247,6 +1261,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 return true;
             });
         }
+
 
 
 
