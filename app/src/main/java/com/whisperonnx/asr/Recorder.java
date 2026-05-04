@@ -74,7 +74,7 @@ public class Recorder {
     private static final int VAD_FRAME_BYTES  = VAD_FRAME_SIZE * BYTES_PER_SAMPLE;
     private static final int PRE_ROLL_FRAMES  = 17;         // ~500 ms
     private static final int TAIL_OVERLAP_FRAMES = 10;      // ~300 ms
-    private static final int MAX_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE * 30;
+    private static final int MAX_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE * 20; // 20s hard cap
     private static final int MIN_SEGMENT_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE / 10;
     private static final int TIMEOUT_FRAMES   = (SAMPLE_RATE / VAD_FRAME_SIZE) * 30;
 
@@ -324,15 +324,25 @@ public class Recorder {
             boolean inSpeech      = false;
             boolean hadSpeech     = false;
             int     silentFrames  = 0;
+            // sustainedSpeechFrames: counts consecutive frames classified as speech.
+            // Used for upward noise floor adaptation — if the environment is consistently
+            // loud but stationary (e.g. fan, AC, traffic), we nudge adaptFloor upward so
+            // the gate eventually rises above the noise. Real speech has high variance;
+            // stationary background noise has low variance relative to the floor.
+            int     sustainedSpeechFrames = 0;
             // Noise floor estimate — bootstrap from first BOOTSTRAP_FRAMES of audio
             // so the adaptive gate has an immediate estimate rather than starting at 0.
-            // Updated only during silent frames using slow EMA (alpha=0.05).
+            // Updated during silent frames (slow EMA) and nudged upward during sustained
+            // stationary "speech" frames (low variance = probable background noise).
             float   adaptFloor    = 0f;
             // Noise variance estimate — speech has much higher intra-frame variance
             // than stationary background noise. Used as a secondary discriminator.
             float   adaptVariance = 0f;
             int     bootstrapFrames = 0;
             final int BOOTSTRAP_FRAMES = 20; // ~600ms of silence to seed the estimates
+            // After this many consecutive speech frames with low variance, raise the floor.
+            // 100 frames × 30ms = 3 seconds of sustained stationary noise triggers adaptation.
+            final int SUSTAINED_NOISE_FRAMES = 100;
             byte[]  tailOverlap   = null;
 
             // Generation tracking — detects rapid stop→start sequences
@@ -438,21 +448,40 @@ public class Recorder {
                                 inSpeech  = true;
                                 hadSpeech = true;
                                 silentFrames = 0;
-                                // Do NOT reset adaptFloor here — keep the noise estimate
-                                // across speech segments so the gate stays calibrated if
-                                // background noise increases mid-session.
+                                sustainedSpeechFrames = 0;
                                 sendUpdate(MSG_RECORDING);
                             }
                             segment.write(frame, 0, n);
                             silentFrames = 0;
+                            sustainedSpeechFrames++;
+
+                            // ── Upward noise floor adaptation for sustained stationary noise ──
+                            // If we have been "in speech" for many frames but the frame variance
+                            // is low (noise is stationary, not speech-like), the environment has
+                            // probably changed to a louder background.  Nudge adaptFloor upward
+                            // slowly so the SNR gate eventually rises above the noise.
+                            // Guard: only adapt if variance suggests non-speech (< 2× floor variance).
+                            // This prevents real long speech from being misclassified as noise.
+                            if (sustainedSpeechFrames > SUSTAINED_NOISE_FRAMES
+                                    && adaptVariance > 5f
+                                    && frameVar < adaptVariance * 2.0f) {
+                                // Raise floor gently toward current RMS × 0.85.
+                                // ×0.85 leaves a 15% margin so real speech onset still triggers.
+                                float targetFloor = frameRms * 0.85f;
+                                if (targetFloor > adaptFloor) {
+                                    adaptFloor = adaptFloor * 0.98f + targetFloor * 0.02f;
+                                }
+                            }
                             if (segment.size() >= MAX_SEGMENT_BYTES) {
                                 tailOverlap = flushSegment(segment, TAIL_OVERLAP_FRAMES);
                                 inSpeech    = false;
+                                sustainedSpeechFrames = 0;
                             }
                         } else {
                             if (inSpeech) {
                                 segment.write(frame, 0, n); // trailing silence frame
                                 inSpeech    = false;
+                                sustainedSpeechFrames = 0;
                                 tailOverlap = flushSegment(segment, TAIL_OVERLAP_FRAMES);
                                 silentFrames = 0;
                             } else {
