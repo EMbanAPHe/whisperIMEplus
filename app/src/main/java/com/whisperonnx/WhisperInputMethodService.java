@@ -241,10 +241,13 @@ public class WhisperInputMethodService extends InputMethodService {
     /** Pending auto-start runnable — cancelled by onFinishInputView to absorb
      * the transient show/hide/show cycle Android sends after Activity dismissal. */
     private Runnable pendingAutoStart = null;
-    /** Minimum interval between successive auto-starts (ms). Prevents double-fire.
-     *  600ms gives the pre-roll buffer ~20 frames (600ms / 30ms) while being long enough
-     *  to absorb the Android phantom show→hide→show triple that arrives ~200ms apart. */
-    private static final long AUTO_START_DEBOUNCE_MS = 600L;
+    /** Debounce for auto-start on keyboard show (ms).
+     *  Android sends a phantom onStartInput→onFinish→onStartInput triple
+     *  when returning from an Activity (Settings, etc.).  The first show is
+     *  phantom; onFinish fires ~200-300ms later and cancels this task.
+     *  400ms is long enough to absorb the phantom cycle while still feeling
+     *  responsive (400ms vs 600ms which felt like a dead keyboard). */
+    private static final long AUTO_START_DEBOUNCE_MS = 400L;
     /** Package name + field ID at the time suppressNextAutoStart was set. */
     private String  suppressedForEditor   = "";
     /** Uptime when suppression was set — expires after SUPPRESS_TIMEOUT_MS. */
@@ -904,34 +907,39 @@ public class WhisperInputMethodService extends InputMethodService {
         btnSecClearRef       = view.findViewById(R.id.btnSecClear);
 
         // ── Cancel long press: toggle "listen on launch" (prefAutoStart) ────────
-        // Long-press must be on the PARENT FrameLayout (wrapperCancel), not on the
-        // child TextView (btnCancel) which is often disabled (alpha=0.4, enabled=false)
-        // and therefore does not receive touch events in Android when enabled=false.
+        // The Cancel button has two states:
+        //   DISABLED (enabled=false, alpha=0.4) — no recording active.
+        //     A disabled child View returns false from dispatchTouchEvent, so the
+        //     parent FrameLayout receives the touch and fires the long-click.
+        //   ENABLED — recording is active. The enabled child CONSUMES the touch
+        //     (it has a regular click listener), so the parent NEVER sees it.
+        //     We must also set the long-click listener directly on btnCancel.
+        // Both cases are covered by registering the same listener on wrapper AND child.
+        final View.OnLongClickListener cancelLongClick = v -> {
+            tap(v);
+            prefAutoStart = !prefAutoStart;
+            sp.edit().putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, prefAutoStart).apply();
+            updateCancelHint();
+            return true;
+        };
         View wrapperCancel = view.findViewById(R.id.wrapperCancel);
-        if (wrapperCancel != null) {
-            wrapperCancel.setOnLongClickListener(v -> {
-                tap(v);
-                prefAutoStart = !prefAutoStart;
-                sp.edit().putBoolean(SettingsActivity.KEY_LAUNCH_LISTENING, prefAutoStart).apply();
-                updateCancelHint();
-                return true;
-            });
-        }
+        if (wrapperCancel != null) wrapperCancel.setOnLongClickListener(cancelLongClick);
+        if (btnCancel      != null) btnCancel.setOnLongClickListener(cancelLongClick);
         updateCancelHint();
 
         // ── Break Audio long press: toggle streaming mode (prefAutoStop) ────────
-        // Same pattern: long-press on parent FrameLayout (wrapperBreakAudio).
+        // Same dual-registration pattern as Cancel.
+        final View.OnLongClickListener breakLongClick = v -> {
+            tap(v);
+            prefAutoStop = !prefAutoStop;
+            sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
+            if (isListening) continuousMode = prefAutoStop;
+            updateBreakHint();
+            return true;
+        };
         View wrapperBreakAudio = view.findViewById(R.id.wrapperBreakAudio);
-        if (wrapperBreakAudio != null) {
-            wrapperBreakAudio.setOnLongClickListener(v -> {
-                tap(v);
-                prefAutoStop = !prefAutoStop;
-                sp.edit().putBoolean(SettingsActivity.KEY_AUTO_STOP, prefAutoStop).apply();
-                if (isListening) continuousMode = prefAutoStop;
-                updateBreakHint();
-                return true;
-            });
-        }
+        if (wrapperBreakAudio != null) wrapperBreakAudio.setOnLongClickListener(breakLongClick);
+        if (btnBreakAudio     != null) btnBreakAudio.setOnLongClickListener(breakLongClick);
         updateBreakHint();
 
         // ── D-pad mode toggle button ──────────────────────────────────────────
@@ -1044,116 +1052,148 @@ public class WhisperInputMethodService extends InputMethodService {
             });
         }
 
-        // ── D-pad — delta-based key events (drag + tap zones) ─────────────
-        // This approach sends real KEYCODE_DPAD_* events accumulating pixel deltas
-        // — exactly the same mechanism as the spacebar's horizontal cursor drag,
-        // extended to all four directions.  Benefits over the old snapshot+setSelection:
-        //   • The app's own cursor logic handles visual line wrapping correctly.
-        //   • Works on proportional fonts (no pixel→char estimation needed).
-        //   • Selection mode (META_SHIFT_ON) lets the app extend its selection naturally.
-        //   • No full-text snapshot needed on touch-down.
-        if (btnDpad != null) {
-            final android.util.DisplayMetrics dmDpad = getResources().getDisplayMetrics();
-            // Pixels of drag needed to fire one cursor step.
-            final float H_STEP = 10f * dmDpad.density;  // ~10dp per character step
-            final float V_STEP = 22f * dmDpad.density;  // ~22dp per visual-line step
 
-            final float[] dpadPrev    = {0f, 0f};  // previous event position
-            final float[] dpadAccumX  = {0f};       // accumulated horizontal delta
-            final float[] dpadAccumY  = {0f};       // accumulated vertical delta
-            final boolean[] dpadDrag  = {false};
+        // ── D-pad — hybrid touch handler ──────────────────────────────────────
+        // NORMAL MODE (dpadSelectionMode=false, shiftActive=false):
+        //   Drag  → incremental DPAD key events (no SHIFT), delta from previous event.
+        //           The app handles visual-line navigation, wrapped text, proportional
+        //           fonts. We just send one key per H/V step.
+        //   Tap   → single DPAD key event.
+        //
+        // SELECTION MODE (dpadSelectionMode=true OR shiftActive=true):
+        //   Drag  → ic.setSelection(anchor, computedOffset), delta measured from
+        //           touch-down so the selection tracks the drag gesture absolutely.
+        //           sendKeyEvent(SHIFT+DPAD) is NOT reliable for selection in modern
+        //           Android IME — custom text views (Signal etc.) bypass that path.
+        //   Tap L/R → ic.setSelection(anchor, end±1) — guaranteed single char step.
+        //   Tap U/D → SHIFT+DPAD key event — only viable path for visual-line step.
+        if (btnDpad != null) {
+            final android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            final float H_KEY_STEP = 10f * dm.density;
+            final float V_KEY_STEP = 22f * dm.density;
+            final float TAP_SLOP   =  8f * dm.density;
+
+            final float[]   prevKX   = {0f};
+            final float[]   prevKY   = {0f};
+            final float[]   accumKX  = {0f};
+            final float[]   accumKY  = {0f};
+            final float[]   downX    = {0f};
+            final float[]   downY    = {0f};
+            final int[]     anchor   = {-1};
+            final int[]     anchLine = {0};
+            final int[]     anchCol  = {0};
+            final String[]  snapTxt  = {""};
+            final int[]     snapLen  = {0};
+            final boolean[] dragged  = {false};
 
             btnDpad.setOnTouchListener((v, ev) -> {
                 float x = ev.getX(), y = ev.getY();
                 float vW = v.getWidth(), vH = v.getHeight();
 
                 switch (ev.getAction()) {
+
                     case MotionEvent.ACTION_DOWN: {
-                        dpadPrev[0]   = x; dpadPrev[1] = y;
-                        dpadAccumX[0] = 0f; dpadAccumY[0] = 0f;
-                        dpadDrag[0]   = false;
+                        dragged[0] = false;
+                        downX[0] = x; downY[0] = y;
+                        prevKX[0] = x; prevKY[0] = y;
+                        accumKX[0] = 0f; accumKY[0] = 0f;
+                        if (dpadSelectionMode || shiftActive) {
+                            android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
+                            if (ic2 != null) {
+                                android.view.inputmethod.ExtractedText et =
+                                        ic2.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                                if (et != null && et.text != null) {
+                                    String txt = et.text.toString();
+                                    snapTxt[0] = txt; snapLen[0] = txt.length();
+                                    int anch = et.selectionStart;
+                                    anchor[0] = anch;
+                                    String[] ls = txt.split("\n", -1);
+                                    int pos = 0;
+                                    for (int li = 0; li < ls.length; li++) {
+                                        int le = pos + ls[li].length();
+                                        if (anch <= le || li == ls.length - 1) {
+                                            anchLine[0] = li; anchCol[0] = anch - pos; break;
+                                        }
+                                        pos += ls[li].length() + 1;
+                                    }
+                                } else { anchor[0] = -1; snapTxt[0] = ""; }
+                            }
+                        }
                         break;
                     }
 
                     case MotionEvent.ACTION_MOVE: {
-                        float dx = x - dpadPrev[0];
-                        float dy = y - dpadPrev[1];
-                        dpadPrev[0] = x; dpadPrev[1] = y;
+                        float dx = x - downX[0], dy = y - downY[0];
+                        if (!dragged[0] && (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP))
+                            dragged[0] = true;
+                        if (!dragged[0]) break;
 
-                        dpadAccumX[0] += dx;
-                        dpadAccumY[0] += dy;
+                        android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
+                        if (ic2 == null) break;
 
-                        // Determine which axis dominates this movement segment
-                        // and send the appropriate key events.
-                        android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-                        if (ic == null) break;
-
-                        // Build meta flags: Shift adds selection extension, Ctrl for word-jump.
-                        // In selection mode the d-pad always extends rather than moves.
-                        int meta = 0;
-                        if (shiftActive || dpadSelectionMode) meta |= KeyEvent.META_SHIFT_ON;
-                        if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
-                        if (altActive)   meta |= KeyEvent.META_ALT_ON;
-
-                        // Horizontal steps
-                        while (dpadAccumX[0] <= -H_STEP) {
-                            dpadAccumX[0] += H_STEP;
-                            dpadDrag[0] = true;
-                            long t = android.os.SystemClock.uptimeMillis();
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN,
-                                    KeyEvent.KEYCODE_DPAD_LEFT, 0, meta));
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,
-                                    KeyEvent.KEYCODE_DPAD_LEFT, 0, meta));
+                        if (dpadSelectionMode || shiftActive) {
+                            // Selection drag: absolute setSelection from anchor
+                            if (anchor[0] < 0 || snapTxt[0].isEmpty()) break;
+                            float fracH = vW > 0 ? dx / vW : 0f;
+                            float fracV = vH > 0 ? dy / vH : 0f;
+                            int cOff = (int)(fracH * 30f);
+                            int lOff = (int)(fracV * 10f);
+                            String[] ls = snapTxt[0].split("\n", -1);
+                            int tl = Math.max(0, Math.min(ls.length - 1, anchLine[0] + lOff));
+                            int tc = Math.max(0, Math.min(ls[tl].length(), anchCol[0] + cOff));
+                            int off = 0;
+                            for (int li = 0; li < tl; li++) off += ls[li].length() + 1;
+                            off = Math.max(0, Math.min(snapLen[0], off + tc));
+                            ic2.setSelection(anchor[0], off);
                             v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
                                     HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
                             if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                        }
-                        while (dpadAccumX[0] >= H_STEP) {
-                            dpadAccumX[0] -= H_STEP;
-                            dpadDrag[0] = true;
-                            long t = android.os.SystemClock.uptimeMillis();
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN,
-                                    KeyEvent.KEYCODE_DPAD_RIGHT, 0, meta));
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,
-                                    KeyEvent.KEYCODE_DPAD_RIGHT, 0, meta));
-                            v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                            if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                        }
-                        // Vertical steps
-                        while (dpadAccumY[0] <= -V_STEP) {
-                            dpadAccumY[0] += V_STEP;
-                            dpadDrag[0] = true;
-                            long t = android.os.SystemClock.uptimeMillis();
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN,
-                                    KeyEvent.KEYCODE_DPAD_UP, 0, meta));
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,
-                                    KeyEvent.KEYCODE_DPAD_UP, 0, meta));
-                            v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                            if (mRecorder != null) mRecorder.suppressVadTrigger(200);
-                        }
-                        while (dpadAccumY[0] >= V_STEP) {
-                            dpadAccumY[0] -= V_STEP;
-                            dpadDrag[0] = true;
-                            long t = android.os.SystemClock.uptimeMillis();
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN,
-                                    KeyEvent.KEYCODE_DPAD_DOWN, 0, meta));
-                            ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,
-                                    KeyEvent.KEYCODE_DPAD_DOWN, 0, meta));
-                            v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,
-                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
-                            if (mRecorder != null) mRecorder.suppressVadTrigger(200);
+
+                        } else {
+                            // Cursor drag: incremental key events from previous position
+                            float dxi = x - prevKX[0], dyi = y - prevKY[0];
+                            prevKX[0] = x; prevKY[0] = y;
+                            accumKX[0] += dxi; accumKY[0] += dyi;
+                            while (accumKX[0] <= -H_KEY_STEP) {
+                                accumKX[0] += H_KEY_STEP;
+                                long t = android.os.SystemClock.uptimeMillis();
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_LEFT,0,0));
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_LEFT,0,0));
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
+                            }
+                            while (accumKX[0] >= H_KEY_STEP) {
+                                accumKX[0] -= H_KEY_STEP;
+                                long t = android.os.SystemClock.uptimeMillis();
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT,0,0));
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_RIGHT,0,0));
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
+                            }
+                            while (accumKY[0] <= -V_KEY_STEP) {
+                                accumKY[0] += V_KEY_STEP;
+                                long t = android.os.SystemClock.uptimeMillis();
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_UP,0,0));
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_UP,0,0));
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
+                            }
+                            while (accumKY[0] >= V_KEY_STEP) {
+                                accumKY[0] -= V_KEY_STEP;
+                                long t = android.os.SystemClock.uptimeMillis();
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_DOWN,0,0));
+                                ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  KeyEvent.KEYCODE_DPAD_DOWN,0,0));
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK,HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING);
+                                if (mRecorder != null) mRecorder.suppressVadTrigger(200);
+                            }
                         }
                         break;
                     }
 
                     case MotionEvent.ACTION_UP: {
-                        if (!dpadDrag[0]) {
-                            // Tap: determine zone from where the finger lifted.
-                            // The tap zones are generous: top/bottom 28%, left/right 28%.
-                            float relX = vW > 0 ? x / vW : 0.5f;
-                            float relY = vH > 0 ? y / vH : 0.5f;
+                        accumKX[0] = 0f; accumKY[0] = 0f;
+                        if (!dragged[0]) {
+                            float relX = vW > 0 ? x/vW : 0.5f, relY = vH > 0 ? y/vH : 0.5f;
                             int kc = 0;
                             if      (relY < 0.28f) kc = KeyEvent.KEYCODE_DPAD_UP;
                             else if (relY > 0.72f) kc = KeyEvent.KEYCODE_DPAD_DOWN;
@@ -1161,19 +1201,37 @@ public class WhisperInputMethodService extends InputMethodService {
                             else if (relX > 0.72f) kc = KeyEvent.KEYCODE_DPAD_RIGHT;
                             if (kc != 0) {
                                 tap(v);
-                                android.view.inputmethod.InputConnection ic = getCurrentInputConnection();
-                                if (ic != null) {
-                                    int meta = 0;
-                                    if (shiftActive || dpadSelectionMode) meta |= KeyEvent.META_SHIFT_ON;
-                                    if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
-                                    if (altActive)   meta |= KeyEvent.META_ALT_ON;
-                                    long t = android.os.SystemClock.uptimeMillis();
-                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, kc, 0, meta));
-                                    ic.sendKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP,   kc, 0, meta));
+                                android.view.inputmethod.InputConnection ic2 = getCurrentInputConnection();
+                                if (ic2 != null) {
+                                    if (dpadSelectionMode || shiftActive) {
+                                        if (kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                                            android.view.inputmethod.ExtractedText et =
+                                                    ic2.getExtractedText(new android.view.inputmethod.ExtractedTextRequest(), 0);
+                                            if (et != null && et.text != null) {
+                                                int newEnd = kc == KeyEvent.KEYCODE_DPAD_LEFT
+                                                        ? Math.max(0, et.selectionEnd - 1)
+                                                        : Math.min(et.text.length(), et.selectionEnd + 1);
+                                                ic2.setSelection(et.selectionStart, newEnd);
+                                            }
+                                        } else {
+                                            int meta = KeyEvent.META_SHIFT_ON;
+                                            if (ctrlActive) meta |= KeyEvent.META_CTRL_ON;
+                                            long t = android.os.SystemClock.uptimeMillis();
+                                            ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,kc,0,meta));
+                                            ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  kc,0,meta));
+                                        }
+                                    } else {
+                                        int meta = 0;
+                                        if (shiftActive) meta |= KeyEvent.META_SHIFT_ON;
+                                        if (ctrlActive)  meta |= KeyEvent.META_CTRL_ON;
+                                        if (altActive)   meta |= KeyEvent.META_ALT_ON;
+                                        long t = android.os.SystemClock.uptimeMillis();
+                                        ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_DOWN,kc,0,meta));
+                                        ic2.sendKeyEvent(new KeyEvent(t,t,KeyEvent.ACTION_UP,  kc,0,meta));
+                                    }
                                 }
                             }
                         }
-                        dpadAccumX[0] = 0f; dpadAccumY[0] = 0f;
                         break;
                     }
                     default: break;
@@ -1181,6 +1239,7 @@ public class WhisperInputMethodService extends InputMethodService {
                 return true;
             });
         }
+
 
 
         // Secondary layout — Tab and Esc buttons
