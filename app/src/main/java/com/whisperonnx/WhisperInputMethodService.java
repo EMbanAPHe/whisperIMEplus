@@ -448,14 +448,17 @@ public class WhisperInputMethodService extends InputMethodService {
         resetProgressUi();
 
         // Idle timeout: if the keyboard has been closed for > 10 minutes and the
-        // user enabled "Return to previous keyboard after idle", switch back now.
+        // user enabled "Return to previous keyboard after idle", suppress auto-start
+        // on this open (don't auto-record), but still show our keyboard normally.
+        // Previously this switched to the previous IME immediately, causing the
+        // "first launch disappears" UX issue. The user can still tap the mic to start.
+        boolean idleSuppressAutoStart = false;
         if (sp != null && sp.getBoolean("imeReturnAfterIdle", false)) {
             long lastClose = sp.getLong(PREF_LAST_CLOSE_TIME, 0L);
             if (lastClose > 0 && android.os.SystemClock.elapsedRealtime() - lastClose > IDLE_TIMEOUT_MS) {
-                sp.edit().putLong(PREF_LAST_CLOSE_TIME, 0L).apply(); // reset so it only fires once
-                Log.d(TAG, "Idle timeout reached — switching to previous input method");
-                switchToPreviousInputMethod();
-                return; // don't show our keyboard
+                sp.edit().putLong(PREF_LAST_CLOSE_TIME, 0L).apply();
+                Log.d(TAG, "Idle timeout reached — suppressing auto-start");
+                idleSuppressAutoStart = true;
             }
         }
 
@@ -472,7 +475,7 @@ public class WhisperInputMethodService extends InputMethodService {
             return;
         }
 
-        if (prefAutoStart && !isListening) {
+        if (prefAutoStart && !isListening && !idleSuppressAutoStart) {
             final String editorKey = currentEditorKey(attribute);
             final long suppressAge = android.os.SystemClock.uptimeMillis() - suppressSetAt;
             // Cancel any pending auto-start from a previous (possibly phantom) show.
@@ -1105,14 +1108,19 @@ public class WhisperInputMethodService extends InputMethodService {
                                 if (et != null && et.text != null) {
                                     String txt = et.text.toString();
                                     snapTxt[0] = txt; snapLen[0] = txt.length();
-                                    int anch = et.selectionStart;
-                                    anchor[0] = anch;
+                                    // anchor[0] = FIXED end (selectionStart) — never moves.
+                                    // anchLine/anchCol = position of the MOVING end (selectionEnd).
+                                    // When re-dragging after lifting, the initial offset computed
+                                    // with dx=0/dy=0 equals selectionEnd, so the existing selection
+                                    // is preserved rather than collapsed back to selectionStart.
+                                    anchor[0] = et.selectionStart;
+                                    int movingEnd = et.selectionEnd;
                                     String[] ls = txt.split("\n", -1);
                                     int pos = 0;
                                     for (int li = 0; li < ls.length; li++) {
                                         int le = pos + ls[li].length();
-                                        if (anch <= le || li == ls.length - 1) {
-                                            anchLine[0] = li; anchCol[0] = anch - pos; break;
+                                        if (movingEnd <= le || li == ls.length - 1) {
+                                            anchLine[0] = li; anchCol[0] = movingEnd - pos; break;
                                         }
                                         pos += ls[li].length() + 1;
                                     }
@@ -2942,19 +2950,30 @@ public class WhisperInputMethodService extends InputMethodService {
     // UI helpers — all must be called on the main thread unless noted
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Show or hide the "active recording" visual state on Cancel, Discard, and Break Audio.
+     * Uses alpha only — NEVER calls setEnabled(false) on these buttons.
+     *
+     * Why: setEnabled(false) on a clickable view still consumes touch events in Android
+     * (returns true from onTouchEvent) but fires no callbacks — so long-press listeners
+     * on the same view silently stop working while the button is "disabled." Alpha alone
+     * gives the visual disabled appearance without breaking touch delivery.
+     *
+     * The click handlers themselves guard against no-op calls:
+     *   • cancelClick: exitListeningMode is a no-op when not listening
+     *   • breakAudioClick: breakAudioAndContinue checks isListening internally
+     */
     private void setCancelEnabled(boolean enabled) {
         if (btnCancel != null) {
-            btnCancel.setEnabled(enabled);
+            // Keep enabled=true always; use alpha for visual state only
             btnCancel.setAlpha(enabled ? 1.0f : 0.4f);
         }
         if (btnDiscard != null) {
-            btnDiscard.setEnabled(enabled);
+            btnDiscard.setEnabled(enabled);  // Discard has no long-press, safe to disable
             btnDiscard.setAlpha(enabled ? 1.0f : 0.4f);
         }
-        // Break Audio follows the same enable/disable pattern as Discard Audio:
-        // it is only meaningful while a session is active.
         if (btnBreakAudio != null) {
-            btnBreakAudio.setEnabled(enabled);
+            // Keep enabled=true always; use alpha for visual state only
             btnBreakAudio.setAlpha(enabled ? 1.0f : 0.4f);
         }
     }

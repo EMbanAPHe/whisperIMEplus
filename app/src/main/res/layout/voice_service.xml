@@ -64,7 +64,7 @@
                         android:layout_width="match_parent" android:layout_height="match_parent"
                         android:background="@drawable/rounded_button_tonal" android:text="@string/cancel_recognition"
                         android:gravity="center" android:textColor="#FFFFFF" android:textSize="11sp"
-                        android:enabled="false" android:alpha="0.4"/>
+                        android:alpha="0.4"/>
                     <ImageView android:id="@+id/imgCancelHint"
                         android:layout_width="13dp" android:layout_height="13dp"
                         android:layout_gravity="top|end" android:layout_margin="3dp"
@@ -245,7 +245,7 @@
                         android:layout_width="match_parent" android:layout_height="match_parent"
                         android:background="@drawable/rounded_button_tonal" android:text="@string/break_audio"
                         android:gravity="center" android:textColor="#FFFFFF" android:textSize="12sp"
-                        android:enabled="false" android:alpha="0.4"/>
+                        android:alpha="0.4"/>
                     <ImageView android:id="@+id/imgBreakAudioHint"
                         android:layout_width="13dp" android:layout_height="13dp"
                         android:layout_gravity="top|end" android:layout_margin="3dp"
